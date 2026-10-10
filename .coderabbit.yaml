@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit AI review. Install the GitHub App (free plan) on this repository;
+# this file only tunes what it says. Comment `@coderabbitai review` on a PR to
+# trigger a review by hand.
+language: en-GB
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Generated or binary: reviewing them is noise. dist/ is checked against its
+  # source in CI instead.
+  path_filters:
+    - "!dist/**"
+    - "!**/*.sig"
+    - "!assets/**"
+
+  path_instructions:
+    - path: "src/kitegate/**"
+      instructions: >-
+        This is a child-safety filter. Treat anything that could let a message,
+        reply or image through unscreened, or make a failure fail open rather
+        than closed, as a high-severity issue. Flag logging of children's
+        messages or identities beyond what the block log needs.
+    - path: "src/kitegate/packs/*.yaml"
+      instructions: >-
+        Values packs are signed; any change here needs a matching re-signed
+        .sig file in the same PR. Check that rule changes do not weaken
+        screening without saying so in the PR description.
+    - path: "src/kitegate/gateway/**"
+      instructions: >-
+        Network-facing. Check authentication on every route, that upstream API
+        keys are never echoed or logged, and that timeouts and size limits are
+        set on outbound and inbound requests.
+    - path: "adapters/openwebui/**"
+      instructions: >-
+        The built files in dist/ are generated from these sources by tools/.
+        Remind the author to rebuild if this changes and dist/ does not.
+    - path: "tests/**"
+      instructions: >-
+        Fixtures must not contain real children's names, messages or other
+        personal data.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Keep permissions least-privilege per job, pin actions, and never expose
+        secrets to pull_request workflows from forks.
+
+chat:
+  auto_reply: true

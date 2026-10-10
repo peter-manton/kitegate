@@ -45,7 +45,7 @@ services:
       - blocklog:/var/lib/kitegate
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.11.4
+    image: ghcr.io/open-webui/open-webui:v0.12.0
     restart: unless-stopped
     depends_on:
       kitegate:
@@ -100,7 +100,7 @@ services:
   # it is a Python app, and provision.py is stdlib-only so it needs nothing
   # from that image beyond the interpreter.
   provision:
-    image: ghcr.io/open-webui/open-webui:v0.11.4
+    image: ghcr.io/open-webui/open-webui:v0.12.0
     restart: "no"
     depends_on:
       open-webui:

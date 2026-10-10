@@ -28,7 +28,7 @@ gateway = ["fastapi==0.143.0", "httpx==0.28.1", "uvicorn==0.54.0"]
 # pydantic and requests are what the Open WebUI adapters import (valves and
 # the photo tool's HTTP), so the suite can exercise them rather than only
 # parsing the built file.
-dev = ["pytest==9.1.1", "pydantic==2.14.0", "requests==2.32.5", "fastapi==0.143.0",
+dev = ["pytest==9.1.1", "pydantic==2.14.0", "requests==2.33.0", "fastapi==0.143.0",
        "httpx==0.28.1", "uvicorn==0.54.0"]
 
 [project.scripts]

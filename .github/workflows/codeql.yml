@@ -1,0 +1,34 @@
+name: codeql
+
+# Code scanning. On a private repository this needs GitHub Code Security (paid);
+# on a public one it is free. Until then the job fails at the upload step, so
+# it is skipped while the repository is private. Remove the `if` once it is
+# public or Code Security is enabled.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "11 5 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"

@@ -1,0 +1,14 @@
+# Put LibreChat's API container on the kitegate network, where
+# the Kitegate gateway runs (adapters/gateway/docker-compose.yml creates it).
+# Copy into your LibreChat checkout next to its docker-compose.yml.
+services:
+  api:
+    volumes:
+      - type: bind
+        source: ./librechat.yaml
+        target: /app/librechat.yaml
+    networks: [default, kitegate]
+
+networks:
+  kitegate:
+    external: true

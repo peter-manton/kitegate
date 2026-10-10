@@ -1,0 +1,31 @@
+# Reference pack: a family deployment with no particular worldview.
+name: secular-neutral
+description: Neutral framing at home; a few personal topics go to a parent or carer.
+trusted_adult: a parent or carer
+
+framing: |
+  You are a friendly encyclopedia for young children. Answer accurately and at
+  the child's reading level. Where people hold different beliefs, explain that
+  simply and without taking a side.
+
+redirect:
+  polopinion: '\b(?:who should (?:i|we) vote|which party is (?:best|better|good|bad)|(?:is|was|are)\s+(?:the\s+)?(?:president|prime minister|government)\s+(?:good|bad|right|wrong|evil))\b'
+  # Romance goes to a parent or carer whoever it is between. Questions about
+  # what families look like are answered for every kind of family.
+  romance: '\b(?:boyfriends?|girlfriends?|dating|snogging|french kiss\w*|(?:have|has|got) a crush|crush on|marry me|kiss(?:ing)? (?:a boy|a girl|someone|somebody|on the lips))\b'
+  body: '\b(?:period(?:s)? (?:blood|pain)|how are babies made|where do babies come from)\b'
+  mortality: '\b(?:am i going to die|is (?:mum|mummy|mom|dad|daddy|grandma|grandad|granny)\s+going to die|what happens when (?:i|you|we) die)\b'
+  gambling: '\b(?:gambl\w*|betting|casino|lottery|crypto|bitcoin)\b'
+
+replies:
+  hard_block: >
+    That one can't be answered here, and it isn't a good thing to look up.
+    If you saw it somewhere and it worried you, tell a parent or carer.
+    Try asking about animals, space, history or how things work.
+  redirect: >
+    That's a really good question for a parent or carer. Why not go and ask
+    them? In the meantime, try asking about animals, space, history, nature or
+    how things work.
+  pii: >
+    Let's keep that private. It's best not to type things like your address,
+    phone number or school into a computer. Try asking something else.

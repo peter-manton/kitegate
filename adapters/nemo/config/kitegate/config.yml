@@ -1,0 +1,33 @@
+# NeMo Guardrails config used behind kitegate. Stock content-safety
+# rails only: the Kitegate core runs in the gateway, before and after this.
+#
+# The gateway sends `model` per request (the upstream name from
+# KITEGATE_CHILD_MODELS), which replaces the main model name below; the rest
+# of the main model entry still applies.
+#
+# Do NOT point the content-safety model at build.nvidia.com: NVIDIA says it
+# is for evaluation only and must not receive personal data, and children's
+# messages are personal data. Run the NemoGuard model yourself (NIM or vLLM)
+# and set its base_url here.
+models:
+  - type: main
+    engine: openai
+    model: gpt-4.1-mini            # replaced per request by the gateway
+    api_key_env_var: MAIN_MODEL_API_KEY
+    parameters:
+      base_url: https://api.openai.com/v1   # any OpenAI-compatible provider
+
+  - type: content_safety
+    engine: openai                 # vLLM / NIM both speak the OpenAI API
+    model: nvidia/llama-3.1-nemoguard-8b-content-safety
+    parameters:
+      base_url: http://nemoguard:8000/v1    # your self-hosted NemoGuard model
+      api_key: EMPTY
+
+rails:
+  input:
+    flows:
+      - content safety check input $model=content_safety
+  output:
+    flows:
+      - content safety check output $model=content_safety

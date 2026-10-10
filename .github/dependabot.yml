@@ -1,0 +1,51 @@
+version: 2
+
+# Security updates (for known vulnerabilities) are switched on in the repo
+# settings and open PRs regardless of this file. This file adds routine version
+# updates. Everything here is pinned exactly, so without Dependabot nothing
+# would ever move.
+
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: "/adapters/gateway"
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: "/adapters/nemo"
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker-compose
+    directories:
+      - "/adapters/gateway"
+      - "/deploy/openwebui"
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docker]

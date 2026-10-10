@@ -1,0 +1,37 @@
+# The Kitegate gateway, optionally with NeMo Guardrails behind it.
+#
+#   cp adapters/gateway/gateway.env.example adapters/gateway/gateway.env   # fill it in
+#   docker compose -f adapters/gateway/docker-compose.yml up -d --build                 # gateway only
+#   docker compose -f adapters/gateway/docker-compose.yml --profile nemo up -d --build  # with NeMo
+#
+# Front ends join the "kitegate" network and use http://kitegate:8080/v1.
+# Nothing here publishes a port on the host: traffic stays on the Docker network.
+name: kitegate
+
+services:
+  kitegate:
+    build:
+      context: ../..
+      dockerfile: adapters/gateway/Dockerfile
+    restart: unless-stopped
+    env_file: gateway.env
+    volumes:
+      - blocklog:/var/lib/kitegate
+    networks: [kitegate]
+
+  nemo:
+    profiles: [nemo]
+    build:
+      context: ../nemo
+    restart: unless-stopped
+    environment:
+      MAIN_MODEL_API_KEY: ${MAIN_MODEL_API_KEY:-}
+    networks: [kitegate]
+
+volumes:
+  # The block log records what children typed when they were blocked.
+  blocklog:
+
+networks:
+  kitegate:
+    name: kitegate

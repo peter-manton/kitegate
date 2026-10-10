@@ -1,0 +1,22 @@
+name: False positive
+description: An innocent question or reply was blocked.
+labels: [false-positive]
+body:
+  - type: textarea
+    id: text
+    attributes:
+      label: The text that was blocked
+      description: Do not include a real child's name or personal details.
+    validations:
+      required: true
+  - type: input
+    id: pack
+    attributes:
+      label: Pack and adapter
+      placeholder: secular-neutral, Open WebUI filter
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Kitegate version

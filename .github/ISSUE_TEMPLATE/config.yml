@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a way past the safety checks
+    url: https://github.com/peter-manton/kitegate/security/advisories/new
+    about: Do not open a public issue for content that gets through, a screening bypass or a data leak. See SECURITY.md.

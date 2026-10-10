@@ -1,0 +1,42 @@
+# Reference pack: a UK school deployment.
+#
+# Written against the DfE "Generative AI: product safety standards":
+#   - replies avoid "I" statements and any suggestion of personhood;
+#   - a block says, in plain words, why it happened and where to get help;
+#   - redirects go to a teacher, not a parent.
+# No protected characteristic is singled out for redirection. Party-political
+# OPINION is redirected (schools must present political issues in a balanced
+# way); learning what an election is still answers.
+name: uk-school
+description: Neutral framing for UK schools; sensitive topics go to a teacher.
+trusted_adult: your teacher
+
+framing: |
+  This is an encyclopedia tool for primary school pupils. Answer accurately, at
+  the pupil's reading level, in neutral language. Where people hold different
+  beliefs or views, say so without favouring one. Do not use "I" statements,
+  do not describe yourself as a person or a friend, and do not ask personal
+  questions. For homework, give a hint or the first step before a full answer.
+
+redirect:
+  polopinion: '\b(?:who should (?:i|we) vote|which party is (?:best|better|good|bad)|(?:is|was|are)\s+(?:the\s+)?(?:president|prime minister|government)\s+(?:good|bad|right|wrong|evil))\b'
+  # Romance goes to a teacher whoever it is between. Questions about what
+  # families look like are answered for every kind of family, as RSE expects.
+  romance: '\b(?:boyfriends?|girlfriends?|dating|snogging|french kiss\w*|(?:have|has|got) a crush|crush on|marry me|kiss(?:ing)? (?:a boy|a girl|someone|somebody|on the lips))\b'
+  body: '\b(?:period(?:s)? (?:blood|pain)|how are babies made|where do babies come from)\b'
+  mortality: '\b(?:am i going to die|is (?:mum|mummy|mom|dad|daddy|grandma|grandad|granny)\s+going to die|what happens when (?:i|you|we) die)\b'
+  gambling: '\b(?:gambl\w*|betting|casino|lottery)\b'
+
+replies:
+  hard_block: >
+    This topic is blocked because it is not suitable for this tool.
+    If you saw something that worried you, tell your teacher.
+    Try a question about animals, space, history or how things work.
+  redirect: >
+    This is a good question to ask your teacher or a grown-up at home, so this
+    tool does not answer it. Try a question about animals, space, history or
+    how things work.
+  pii: >
+    That looks like personal information, such as an address, phone number or
+    school name. It is safest not to type those into a computer, so the
+    question was not sent.

@@ -1,0 +1,7 @@
+# Everything is reviewed by the owner. The paths below get called out because
+# a change to them can switch screening off or change who is trusted.
+*                          @peter-manton
+/src/kitegate/packs/       @peter-manton
+/src/kitegate/gateway/     @peter-manton
+/.github/                  @peter-manton
+/SECURITY.md               @peter-manton

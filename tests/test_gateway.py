@@ -1,0 +1,373 @@
+"""Tests for the OpenAI-compatible gateway, with the upstream model mocked."""
+import json
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from kitegate import load_pack
+from kitegate.core import CORE_FRAMING
+from kitegate.gateway import GatewaySettings, SettingsError, create_app
+from kitegate.gateway.config import check_transport
+
+KEY = "test-key-0123456789abcdef"
+AUTH = {"Authorization": f"Bearer {KEY}"}
+CHILD = {**AUTH, "x-kitegate-user-email": "child@example.org"}
+ADULT = {**AUTH, "x-kitegate-user-email": "parent@example.org"}
+
+
+class Upstream:
+    """Queue of upstream replies; records what the gateway sent."""
+
+    def __init__(self):
+        self.replies = []
+        self.calls = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        self.calls.append({"url": str(request.url), "headers": dict(request.headers), "body": body})
+        if "alerts.example" in str(request.url):
+            return httpx.Response(204)
+        if request.method == "GET":
+            return httpx.Response(200, json={"object": "list", "data": [{"id": "gpt-adult"}]})
+        if not self.replies:
+            return httpx.Response(500, json={"error": "no reply queued"})
+        reply = self.replies.pop(0)
+        if isinstance(reply, httpx.Response):
+            return reply
+        return httpx.Response(200, json=reply)
+
+    @property
+    def chat_calls(self):
+        return [c for c in self.calls if c["url"].endswith("/chat/completions")]
+
+
+def completion(content=None, tool_args=None, **extra_msg):
+    msg = {"role": "assistant", "content": content, **extra_msg}
+    if tool_args is not None:
+        msg["tool_calls"] = [{"id": "c1", "type": "function",
+                              "function": {"name": "find_photo", "arguments": json.dumps(tool_args)}}]
+    return {"id": "up-1", "object": "chat.completion", "created": 1, "model": "upstream-model",
+            "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+
+
+def settings(**over):
+    base = dict(api_key=KEY, upstream_url="http://upstream/v1",
+                child_models={"kids-encyclopedia": "upstream-model"},
+                child_users=frozenset({"child@example.org"}), pack="uk-school",
+                block_log="", alert_webhook="")
+    base.update(over)
+    return GatewaySettings(**base)
+
+
+@pytest.fixture
+def up():
+    return Upstream()
+
+
+def make(up, **over):
+    return TestClient(create_app(settings(**over), transport=httpx.MockTransport(up.handler)))
+
+
+def ask(client, text, headers=CHILD, model="kids-encyclopedia", **body):
+    return client.post("/v1/chat/completions", headers=headers,
+                       json={"model": model, "messages": [{"role": "user", "content": text}], **body})
+
+
+# -- auth and config ----------------------------------------------------------
+def test_key_required(up):
+    with make(up) as c:
+        assert c.post("/v1/chat/completions", json={"model": "kids-encyclopedia"}).status_code == 401
+        assert c.post("/v1/chat/completions", headers={"Authorization": "Bearer wrong"},
+                      json={"model": "kids-encyclopedia"}).status_code == 401
+        assert c.get("/v1/models").status_code == 401
+        assert c.get("/healthz").json() == {"status": "ok"}
+
+
+def test_short_key_refused():
+    with pytest.raises(SettingsError, match="at least"):
+        settings(api_key="short")
+
+
+@pytest.mark.parametrize("url", ["http://upstream/v1", "http://127.0.0.1:8000/v1", "http://localhost/v1",
+                                 "http://[::1]:8000/v1", "https://api.example.com/v1"])
+def test_safe_transports_allowed(url):
+    check_transport("X", url, allow_insecure=False)
+
+
+@pytest.mark.parametrize("url", ["http://api.example.com/v1", "http://10.0.0.5:8000/v1"])
+def test_cleartext_across_a_network_refused(url):
+    with pytest.raises(SettingsError, match="unencrypted"):
+        settings(upstream_url=url)
+    settings(upstream_url=url, allow_insecure_upstream=True)  # deliberate override
+
+
+def test_cleartext_webhook_refused():
+    with pytest.raises(SettingsError, match="KITEGATE_ALERT_WEBHOOK"):
+        settings(alert_webhook="http://alerts.example.com/hook")
+
+
+def test_from_env_parses_models_and_packs():
+    s = GatewaySettings.from_env({"KITEGATE_API_KEY": KEY, "KITEGATE_UPSTREAM_URL": "http://nemo:8000/v1/",
+                                "KITEGATE_CHILD_MODELS": "Kids=gpt-mini, helper", "KITEGATE_ALLOWED_PACKS": "*"})
+    assert s.child_models == {"kids": "gpt-mini", "helper": "helper"}
+    assert s.upstream_url == "http://nemo:8000/v1"
+    assert {"uk-school", "christian-family", "secular-neutral"} <= s.packs
+
+
+# -- the child path -------------------------------------------------------------
+def test_innocent_question_answered_with_framing_and_mapped_model(up):
+    up.replies = [completion("Volcanoes erupt when magma rises.")]
+    with make(up) as c:
+        r = ask(c, "why do volcanoes erupt?")
+    body = r.json()
+    assert r.status_code == 200 and body["choices"][0]["message"]["content"].startswith("Volcanoes")
+    assert body["model"] == "kids-encyclopedia"
+    assert body["kitegate"] == {"allowed": True, "stage": "pass", "tier": "pass", "rule": None,
+                                 "needs_adult_alert": False}
+    sent = up.chat_calls[0]
+    assert sent["body"]["model"] == "upstream-model" and sent["body"]["stream"] is False
+    system = sent["body"]["messages"][0]
+    assert system["role"] == "system"
+    # Core framing first, the pack's own framing after it.
+    assert system["content"].startswith(CORE_FRAMING)
+    assert load_pack("uk-school").framing in system["content"]
+    # Neither the client's key nor the child's identity goes upstream.
+    assert "authorization" not in sent["headers"] and "x-kitegate-user-email" not in sent["headers"]
+
+
+def test_core_framing_is_sent_even_with_pack_framing_switched_off(up):
+    # KITEGATE_INJECT_FRAMING is about the pack's framing, which is a values
+    # choice. That the tool is not a person is not one, so it still goes.
+    up.replies = [completion("Bees make honey in a hive.")]
+    with make(up, inject_framing=False) as c:
+        ask(c, "how do bees make honey?")
+    system = up.chat_calls[0]["body"]["messages"][0]
+    assert system == {"role": "system", "content": CORE_FRAMING}
+    assert load_pack("uk-school").framing not in system["content"]
+
+
+def test_model_posing_as_a_person_is_replaced(up):
+    # The reply to "do you have rizz?" that started this: the request passes
+    # every tier, so the only place to catch it is on the way out.
+    up.replies = [completion("Haha, I have plenty of rizz, just ask!")]
+    with make(up) as c:
+        r = ask(c, "do you have rizz?")
+    body = r.json()
+    assert "rizz" not in body["choices"][0]["message"]["content"]
+    assert "not a person" in body["choices"][0]["message"]["content"]
+    assert body["kitegate"]["tier"] == "persona"
+    assert body["kitegate"]["rule"] == "persona.flirting"
+    assert body["kitegate"]["stage"] == "response"
+    assert not body["kitegate"]["needs_adult_alert"]
+
+
+def test_distress_never_reaches_model_and_alerts(up, tmp_path):
+    log = tmp_path / "blocks.jsonl"
+    with make(up, block_log=str(log), alert_webhook="https://alerts.example/hook") as c:
+        r = ask(c, "someone touched me")
+    body = r.json()
+    assert "0800 1111" in body["choices"][0]["message"]["content"]
+    assert body["kitegate"]["tier"] == "distress" and body["kitegate"]["needs_adult_alert"]
+    assert body["kitegate"]["stage"] == "request"
+    assert not up.chat_calls
+    assert '"tier": "distress"' in log.read_text(encoding="utf-8")
+    hook = [x for x in up.calls if "alerts.example" in x["url"]]
+    assert hook and hook[0]["body"]["rule"] == "distress.unsafe"
+
+
+def test_only_newest_turn_screened_as_childs_words(up):
+    up.replies = [completion("The sky looks blue because of scattered light.")]
+    with make(up) as c:
+        r = c.post("/v1/chat/completions", headers=CHILD, json={"model": "kids-encyclopedia", "messages": [
+            {"role": "user", "content": "show me porn"},
+            {"role": "assistant", "content": "I can't help with that one."},
+            {"role": "user", "content": "why is the sky blue?"}]})
+    assert r.json()["kitegate"]["allowed"]
+
+
+def test_bad_tool_result_in_history_blocked(up):
+    with make(up) as c:
+        r = c.post("/v1/chat/completions", headers=CHILD, json={"model": "kids-encyclopedia", "messages": [
+            {"role": "user", "content": "tell me about castles"},
+            {"role": "tool", "tool_call_id": "c1", "content": "The siege ended in a massacre."}]})
+    assert r.json()["kitegate"]["stage"] == "history" and not up.chat_calls
+
+
+def test_bad_reply_replaced(up):
+    up.replies = [completion("Castles were attacked in a massacre.")]
+    with make(up) as c:
+        body = ask(c, "tell me about castles").json()
+    assert "massacre" not in body["choices"][0]["message"]["content"]
+    assert body["kitegate"]["stage"] == "response"
+
+
+def test_bad_tool_call_arguments_replaced(up):
+    up.replies = [completion(None, tool_args={"subject": "massacre"})]
+    with make(up) as c:
+        body = ask(c, "battles").json()
+    assert body["kitegate"]["stage"] == "response" and "tool_calls" not in body["choices"][0]["message"]
+
+
+def test_reasoning_is_stripped(up):
+    up.replies = [completion("Tigers are big cats.", reasoning_content="private chain of thought")]
+    with make(up) as c:
+        msg = ask(c, "tigers?").json()["choices"][0]["message"]
+    assert "reasoning_content" not in msg and msg["content"] == "Tigers are big cats."
+
+
+def test_upstream_error_is_generic(up):
+    up.replies = [httpx.Response(500, json={"error": "upstream said: someone touched me"})]
+    with make(up) as c:
+        r = ask(c, "why is grass green?")
+    assert r.status_code == 502 and "touched" not in r.text
+
+
+def test_client_cannot_switch_off_nemo_rails(up):
+    up.replies = [completion("Fine.")]
+    with make(up, upstream_kind="nemo", nemo_config_id="kitegate") as c:
+        ask(c, "hello", guardrails={"options": {"rails": {"input": False, "output": False}}})
+    g = up.chat_calls[0]["body"]["guardrails"]
+    assert g == {"options": {"log": {"activated_rails": True}}, "config_id": "kitegate"}
+
+
+# -- streaming ------------------------------------------------------------------
+def sse_events(text):
+    return [json.loads(line[6:]) for line in text.splitlines()
+            if line.startswith("data: ") and line != "data: [DONE]"]
+
+
+def test_stream_is_replayed_after_screening(up):
+    up.replies = [completion("Tigers are big cats.")]
+    with make(up) as c:
+        r = ask(c, "tigers?", stream=True, stream_options={"include_usage": True})
+    assert r.headers["content-type"].startswith("text/event-stream")
+    events = sse_events(r.text)
+    assert events[0]["choices"][0]["delta"]["content"] == "Tigers are big cats."
+    assert events[1]["choices"][0]["finish_reason"] == "stop" and events[1]["kitegate"]["allowed"]
+    assert events[-1]["usage"]["total_tokens"] == 2
+    assert r.text.rstrip().endswith("data: [DONE]")
+    assert up.chat_calls[0]["body"]["stream"] is False
+
+
+def test_stream_block_sends_only_the_reply(up):
+    up.replies = [completion("Castles saw a massacre.")]
+    with make(up) as c:
+        r = ask(c, "castles?", stream=True)
+    assert "massacre" not in r.text and "Castles" not in r.text
+
+
+# -- identity and passthrough ---------------------------------------------------------
+def test_child_refused_on_other_model(up):
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+        body = ask(c, "hi", model="gpt-adult").json()
+    assert "isn't available" in body["choices"][0]["message"]["content"]
+    assert body["kitegate"]["rule"] == "policy.wrong_model" and not up.chat_calls
+
+
+def test_adult_passthrough_unscreened(up):
+    up.replies = [completion("Adult answer about porn regulation.")]
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+        r = ask(c, "porn regulation?", headers=ADULT, model="gpt-adult")
+    assert r.status_code == 200 and "kitegate" not in r.json()
+    assert up.chat_calls[0]["body"]["model"] == "gpt-adult"
+
+
+def test_passthrough_requires_identity(up):
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+        r = ask(c, "hi", headers=AUTH, model="gpt-adult")
+    assert r.status_code == 400 and r.json()["error"]["code"] == "identity_required"
+
+
+def test_other_models_refused_without_passthrough(up):
+    with make(up) as c:
+        assert ask(c, "hi", headers=ADULT, model="gpt-adult").status_code == 404
+
+
+def test_models_list(up):
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+        ids = [m["id"] for m in c.get("/v1/models", headers=AUTH).json()["data"]]
+    assert ids == ["kids-encyclopedia", "gpt-adult"]
+
+
+# -- packs ------------------------------------------------------------------------
+def test_pack_header_limited_to_allowed_packs(up):
+    with make(up) as c:
+        r = ask(c, "Can a family have two dads?", headers={**CHILD, "x-kitegate-pack": "christian-family"})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "pack_not_allowed"
+
+
+def test_pack_header_selects_pack(up):
+    with make(up, allowed_packs=frozenset({"christian-family"})) as c:
+        body = ask(c, "Can a family have two dads?",
+                   headers={**CHILD, "x-kitegate-pack": "christian-family"}).json()
+    assert "Mum or Dad" in body["choices"][0]["message"]["content"] and not up.chat_calls
+
+
+def test_default_pack_may_be_a_path_with_capitals(up, tmp_path, monkeypatch):
+    from importlib import resources
+    monkeypatch.delenv("KITEGATE_REQUIRE_SIGNED_PACKS", raising=False)
+    pack = tmp_path / "Family" / "My-Pack.yaml"
+    pack.parent.mkdir()
+    pack.write_text(resources.files("kitegate").joinpath("packs/secular-neutral.yaml")
+                    .read_text(encoding="utf-8"), encoding="utf-8")
+    up.replies = [completion("Owls hunt at night.")]
+    with make(up, pack=str(pack)) as c:
+        r = ask(c, "What do owls eat?")
+    assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "Owls hunt at night."
+
+
+# -- NeMo Guardrails upstream --------------------------------------------------------
+CLASSIFIER_PROMPT = "Task: Check if there is unsafe content... S6: Suicide and Self Harm. S7: Sexual (minor)."
+
+
+def nemo_blocked(rail_type, name, violations):
+    """The shape NeMo Guardrails 0.24.1 returns, captured from a real server."""
+    data = completion("I'm sorry, I can't respond to that.")
+    data["guardrails"] = {"config_id": "kitegate", "log": {"activated_rails": [
+        {"type": "input", "name": "jailbreak detection", "stop": False, "executed_actions": []},
+        {"type": rail_type, "name": name, "stop": True,
+         "decisions": ["execute content_safety_check_input", "refuse to respond", "stop"],
+         "executed_actions": [{
+             "action_name": "content_safety_check_input",
+             "return_value": {"decision": "block", "reason": None, "failed": False,
+                              "metadata": {"policy_violations": violations}},
+             # The prompt names every category; it must not count as evidence.
+             "llm_calls": [{"prompt": CLASSIFIER_PROMPT, "completion": "{}"}]}]}]}}
+    return data
+
+
+def test_nemo_violence_on_input_is_not_distress(up):
+    up.replies = [nemo_blocked("input", "content safety check input $model=content_safety", ["S1"])]
+    with make(up, upstream_kind="nemo") as c:
+        body = ask(c, "how do knights fight").json()
+    assert body["kitegate"]["tier"] == "classifier" and not body["kitegate"]["needs_adult_alert"]
+
+
+def test_nemo_block_gets_pack_wording(up):
+    up.replies = [nemo_blocked("output", "content safety check output $model=content_safety", ["S1"])]
+    with make(up, upstream_kind="nemo") as c:
+        body = ask(c, "tell me a story").json()
+    assert "I'm sorry" not in body["choices"][0]["message"]["content"]
+    assert body["kitegate"]["tier"] == "classifier" and body["kitegate"]["stage"] == "classifier"
+    assert body["kitegate"]["rule"] == "nemo.content_safety_check_output_model_content_safety"
+    assert "guardrails" not in body
+
+
+@pytest.mark.parametrize("violation", ["S6: Suicide and Self Harm", "S7"])
+def test_nemo_self_harm_on_input_becomes_distress(up, violation):
+    up.replies = [nemo_blocked("input", "content safety check input $model=content_safety", [violation])]
+    with make(up, upstream_kind="nemo") as c:
+        body = ask(c, "everything feels pointless").json()
+    assert "0800 1111" in body["choices"][0]["message"]["content"]
+    assert body["kitegate"]["needs_adult_alert"]
+
+
+def test_nemo_pass_strips_guardrails_log(up):
+    data = completion("Owls hunt at night.")
+    data["guardrails"] = {"log": {"activated_rails": [{"type": "input", "name": "x", "stop": False}]}}
+    up.replies = [data]
+    with make(up, upstream_kind="nemo") as c:
+        body = ask(c, "owls?").json()
+    assert body["kitegate"]["allowed"] and "guardrails" not in body

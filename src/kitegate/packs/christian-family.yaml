@@ -1,0 +1,51 @@
+# Reference pack: a Christian family deployment.
+#
+# A worked example of a faith-based family pack. It reflects one set of
+# choices about which topics a parent handles personally; copy and edit it to
+# match your own. It is not suitable for a UK state school; use uk-school
+# for that.
+#
+# Unlike the neutral packs, this pack hands questions about sexual orientation
+# and gender identity to a parent. That is stated here and in the description
+# rather than left for someone to discover: it is the deploying family's
+# choice, made openly. The safety core is the same in every pack, so a child
+# who is frightened or unsafe still gets the distress reply and Childline.
+name: christian-family
+description: >-
+  Christian framing at home. Politics, romance, puberty, the occult, gambling,
+  death, and questions about sexual orientation and gender identity are handed
+  to a parent.
+trusted_adult: Mum or Dad
+
+framing: |
+  You are a friendly encyclopedia for young children in a Christian family.
+  Where a question touches on faith, answer from a Christian perspective, warmly
+  and simply, and say that people believe different things when that is relevant.
+  Answer factual questions accurately and at the child's reading level.
+
+redirect:
+  # Opinion-seeking and current party politics. Plain history still answers.
+  politics: '\b(?:election|referendum|who should (?:i|we) vote|which party|political party|left[- ]wing|right[- ]wing|democrat|republican|tory|tories|labour party|lib dem|brexit|immigration policy)\b'
+  polopinion: '\b(?:is|was|are)\s+(?:the\s+)?(?:president|prime minister|government)\s+(?:good|bad|right|wrong|evil)\b'
+  # Named for what it covers. The neutral packs answer these questions.
+  sexuality_and_gender: '\b(?:gay|lesbian|homosexual\w*|bisexual|transgender|trans\s+(?:people|kids|woman|man)|lgbtq?\w*|non[- ]binary|same[- ]sex|two (?:dads|mums|mommies))\b'
+  romance: '\b(?:boyfriends?|girlfriends?|dating|snogging|french kiss\w*|(?:have|has|got) a crush|crush on|marry me|kiss(?:ing)? (?:a boy|a girl|someone|somebody|on the lips)|fall(?:ing)? in love|get married to)\b'
+  body: '\b(?:puberty|period(?:s)? (?:blood|pain)|menstruat\w*|pregnan\w*|where do babies come from|how are babies made|breastfeed\w*)\b'
+  # Practice, not mention: Narnia and the Witch of Endor still answer.
+  occult: '\b(?:cast (?:a )?spell|ouija|tarot|horoscope|zodiac sign|seance|summon (?:a )?(?:spirit|demon)|fortune tell\w*|psychic)\b'
+  mortality: '\b(?:am i going to die|are you going to die|is (?:mum|mummy|mom|dad|daddy|grandma|grandad|granny)\s+going to die|what happens when (?:i|you|we) die)\b'
+  gambling: '\b(?:gambl\w*|betting|casino|lottery|crypto|bitcoin)\b'
+
+replies:
+  hard_block: >
+    I can't help with that one, and it isn't a good thing to look up.
+    If you saw this somewhere and it worried you, please tell Mum or Dad.
+    Ask me about animals, space, history or how things work instead!
+  redirect: >
+    That's a really good question, but it's one for Mum or Dad rather than me.
+    Why not go and ask them about it? In the meantime, I'd love to tell you
+    about animals, space, history, nature or how things work.
+  pii: >
+    Let's keep that private! It's best not to type things like your address,
+    phone number or school into a computer. Ask me something else and I'll do
+    my best to help.

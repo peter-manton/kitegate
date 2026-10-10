@@ -1,0 +1,103 @@
+# Hooks that run before each commit, and the test suite before each push.
+#
+# One-time setup per clone:
+#   pip install pre-commit
+#   pre-commit install --install-hooks
+#
+# TruffleHog is not installed by pre-commit: as a Go hook it is built from
+# source on first use, which takes long enough to put people off upgrading it
+# (trufflesecurity/trufflehog#4281). Install it with the platform's package
+# manager instead, and keep it current, since a secret scanner is only as good
+# as its newest detectors:
+#   scoop install trufflehog | brew install trufflehog
+#   curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+#
+# To check the whole tree rather than one commit's worth of changes:
+#   pre-commit run --all-files
+#
+# Two file sets are deliberately never rewritten by a hook:
+#   src/kitegate/packs/*.yaml  - signed; a stripped space breaks the signature
+#   dist/*.py                  - generated; edit the source and rebuild
+
+minimum_pre_commit_version: "4.0.0"
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: check-executables-have-shebangs
+      # A cheap, dependency-free backstop for the one secret that matters most
+      # here: the key the packs are signed with.
+      - id: detect-private-key
+      - id: end-of-file-fixer
+        exclude: ^(dist/|src/kitegate/packs/)
+      # No mixed-line-ending hook: .gitattributes already pins the repo to LF,
+      # so on a Windows checkout it rewrites files for a change git cannot see.
+      - id: trailing-whitespace
+        exclude: ^(dist/|src/kitegate/packs/)
+
+  # SAST for Python. tests/ is excluded because its asserts are the point of
+  # the file (B101), and dist/ because it is generated from src/, which is
+  # scanned. Exclusions are duplicated in [tool.bandit] so that a run by hand
+  # agrees with the hook.
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: [--configfile, pyproject.toml]
+        # Unpinned on purpose: this is an extra of the pinned bandit above, and
+        # pinning it again makes pip refuse to resolve the pair. It supplies
+        # the TOML reader that --configfile needs on Python 3.10.
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^(tests/|dist/)
+
+  - repo: local
+    hooks:
+      # Secret scanning. No flags on purpose: TruffleHog recognises that it is
+      # running under pre-commit and sets its own ("Running as a pre-commit
+      # hook, overriding default flags for hook context"), which is the only
+      # arrangement that actually reads staged-but-uncommitted content. The
+      # flags its guide gives as the manual equivalent include
+      # `--since-commit HEAD`, which sees commits only and so lets a staged
+      # key straight through. If the output carries no pre-commit line, the
+      # installed TruffleHog is too old to be trusted here; verified on 3.97.
+      - id: trufflehog
+        name: TruffleHog
+        description: Scan the staged changes for secrets.
+        entry: trufflehog git file://.
+        language: system
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+
+      # Same gate as CI: the pasteable Open WebUI files in dist/ are built from
+      # the package, so a commit that changes one without the other ships a
+      # filter that does not match its source.
+      - id: owui-filter-built
+        name: Built Open WebUI filter matches its source
+        entry: python tools/build_owui_filter.py --check
+        language: system
+        pass_filenames: false
+        files: ^(src/kitegate/|adapters/openwebui/|tools/|dist/)
+
+      - id: owui-photo-built
+        name: Built Open WebUI photo tool matches its source
+        entry: python tools/build_owui_photo.py --check
+        language: system
+        pass_filenames: false
+        files: ^(src/kitegate/|adapters/openwebui/|tools/|dist/)
+
+      # Too slow for every commit, fast enough before a push.
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

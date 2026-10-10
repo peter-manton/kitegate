@@ -1,0 +1,47 @@
+name: security
+
+# The pre-commit hooks are the first line, but they only run on machines where
+# someone installed them, and --no-verify exists. This is the same two scanners
+# over the whole tree and the whole history, where nobody can skip them.
+
+on:
+  push:
+  pull_request:
+  # A secret scanner finds things with detectors it did not have last month,
+  # so re-run against an unchanged tree.
+  schedule:
+    - cron: "37 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.14"
+      - run: pip install "pre-commit==4.6.2"
+      # Skipped here rather than everywhere: TruffleHog is the job below, and
+      # pytest and the two dist checks are test.yml, which installs the
+      # package they need. This job deliberately installs nothing else.
+      - run: pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: trufflehog,pytest,owui-filter-built,owui-photo-built
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # Scan the whole history, not just the tip: a key removed in a later
+          # commit is still published.
+          fetch-depth: 0
+      - name: TruffleHog
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+            | sh -s -- -b "$RUNNER_TEMP/bin" v3.99.2
+          "$RUNNER_TEMP/bin/trufflehog" --version
+          "$RUNNER_TEMP/bin/trufflehog" git file://. --results=verified,unknown --fail --no-update

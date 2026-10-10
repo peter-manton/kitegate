@@ -1,0 +1,50 @@
+# Secrets, and anything about real children.
+.env
+*.env
+*.key
+*.pem
+*.pem.bak
+*.crt
+*.cer
+*.p12
+*.pfx
+*token*.txt
+*secret*.txt
+transcripts/
+blocks.jsonl
+*.jsonl
+*.log
+# Browser-test screenshots show a child's chat window.
+owui-filter-*.png
+test-results/
+playwright-report/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+# dist/ is tracked on purpose: the pasteable filters are built there.
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local deployment edits, but not the shipped LibreChat example.
+docker-compose.override.yml
+!adapters/librechat/docker-compose.override.yml
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

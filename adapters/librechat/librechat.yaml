@@ -1,0 +1,34 @@
+# LibreChat config: every model goes through the Kitegate gateway.
+#
+# Merge this into your librechat.yaml. Children and adults both use the
+# "Kitegate" endpoint; the gateway screens children's models and passes adult
+# models through (KITEGATE_PASSTHROUGH=true), refusing any child account on
+# an adult model. That only works if LibreChat has NO other way to reach a
+# model, so also set in LibreChat's .env:
+#
+#   ENDPOINTS=custom          # turn off the built-in OpenAI/Anthropic/Google/agents endpoints
+#   KITEGATE_API_KEY=  # the same key as the gateway's
+#
+# and keep agents, MCP servers, web search, file search and code execution
+# off for child accounts: those reach models and tools around the gateway.
+# Check those switches against your LibreChat version's docs.
+version: 1.2.8
+
+endpoints:
+  custom:
+    - name: "Kitegate"
+      apiKey: "${KITEGATE_API_KEY}"
+      # Same Docker network as the gateway (see docker-compose.override.yml).
+      baseURL: "http://kitegate:8080/v1"
+      models:
+        default: ["kids-encyclopedia"]
+        # true lists adult models from the passthrough upstream as well.
+        fetch: true
+      headers:
+        # Who is asking. LibreChat sends "" when the field is empty, which
+        # the gateway treats as no identity and refuses (with passthrough on).
+        x-kitegate-user-email: "{{LIBRECHAT_USER_EMAIL}}"
+      # Title generation puts the conversation in a system message, which
+      # the gateway does not screen as the child's words. Keep it off.
+      titleConvo: false
+      modelDisplayLabel: "Kitegate"

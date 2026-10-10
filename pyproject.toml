@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kitegate"
+version = "0.1.0"
+description = "A safety core for children's AI services, with swappable, signed values packs."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# cryptography checks pack signatures (Ed25519).
+dependencies = ["PyYAML==6.0.3", "cryptography==50.0.2"]
+keywords = ["children", "safety", "guardrails", "llm", "content-filter", "safeguarding"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications :: Chat",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+# The OpenAI-compatible gateway. The core above needs none of this.
+gateway = ["fastapi==0.143.0", "httpx==0.28.1", "uvicorn==0.54.0"]
+# pydantic and requests are what the Open WebUI adapters import (valves and
+# the photo tool's HTTP), so the suite can exercise them rather than only
+# parsing the built file.
+dev = ["pytest==9.1.1", "pydantic==2.14.0", "requests==2.32.5", "fastapi==0.143.0",
+       "httpx==0.28.1", "uvicorn==0.54.0"]
+
+[project.scripts]
+kitegate = "kitegate.gateway:main"
+kitegate-pack = "kitegate.packtool:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+kitegate = ["packs/*.yaml", "packs/*.yaml.sig"]
+
+[tool.bandit]
+# Read by the bandit pre-commit hook, and by `bandit -c pyproject.toml -r .`
+# run by hand. tests/ asserts are the point of the file rather than a finding,
+# and dist/ is generated from src/, which is scanned.
+exclude_dirs = ["tests", "dist", "build", ".venv", ".git"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Run from a clean checkout with no install. Without this, `pytest` collects
+# nothing but ModuleNotFoundError for kitegate unless someone has remembered
+# `pip install -e .`, and the failure looks like a broken test suite rather
+# than a missing step. An editable install still takes precedence.
+pythonpath = ["src"]
+# Live checks reach the real Wikipedia and OpenAI APIs, so they are opt-in:
+#   pytest -m live
+markers = ["live: needs network and real API credentials; deselected by default"]
+addopts = "-m 'not live'"

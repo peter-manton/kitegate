@@ -1,0 +1,147 @@
+# Open WebUI for a family or classroom, with every model call going through
+# the Kitegate gateway. Run ./setup.sh (or setup.ps1 / start.cmd on Windows)
+# the first time; afterwards `docker compose up -d` in this folder.
+#
+#   browser -> Open WebUI -> kitegate -> your model provider
+#                                              \-> or Ollama on this machine (COMPOSE_PROFILES=local)
+#
+# Only Open WebUI is published, on 127.0.0.1. The gateway and Ollama are
+# reachable only on the internal Docker network.
+name: kitegate
+
+services:
+  kitegate:
+    build:
+      context: ../..
+      dockerfile: adapters/gateway/Dockerfile
+    restart: unless-stopped
+    environment:
+      KITEGATE_API_KEY: ${KITEGATE_API_KEY:?run setup first}
+      KITEGATE_UPSTREAM_URL: ${KITEGATE_UPSTREAM_URL:?run setup first}
+      KITEGATE_UPSTREAM_API_KEY: ${KITEGATE_UPSTREAM_API_KEY:-}
+      KITEGATE_UPSTREAM_KIND: openai
+      KITEGATE_CHILD_MODELS: kids-encyclopedia=${KITEGATE_UPSTREAM_MODEL:?run setup first}
+      KITEGATE_CHILD_USERS: ${KITEGATE_CHILD_USERS:-}
+      KITEGATE_PACK: ${KITEGATE_PACK:-secular-neutral}
+      KITEGATE_PACK_KEYS: ${KITEGATE_PACK_KEYS:-}
+      KITEGATE_REQUIRE_SIGNED_PACKS: "true"
+      # Adults' models pass through unscreened; children are refused on them.
+      KITEGATE_PASSTHROUGH: "true"
+      KITEGATE_BLOCK_LOG: /var/lib/kitegate/blocks.jsonl
+      KITEGATE_ALERT_WEBHOOK: ${KITEGATE_ALERT_WEBHOOK:-}
+      # Pictures. Empty is not "off": the gateway scans them when there is a
+      # moderation key and removes them when there is not, so a child is never
+      # shown an unscanned picture either way. "block" removes them whatever
+      # the key says. Pictures still need the photo tool installed in Open
+      # WebUI by hand — see section 9 of docs/quickstart.md.
+      KITEGATE_IMAGE_POLICY: ${KITEGATE_IMAGE_POLICY:-}
+      KITEGATE_IMAGE_SCAN_API_KEY: ${KITEGATE_IMAGE_SCAN_API_KEY:-}
+      # Blank means the hosts of the providers Kitegate ships, which is what
+      # you want: both Wikimedia hosts (measured, scaled thumbnails come from
+      # thumb.wikimedia.org and unscaled originals from upload.wikimedia.org,
+      # so listing one silently drops the other) and NASA's.
+      KITEGATE_IMAGE_HOSTS: ${KITEGATE_IMAGE_HOSTS:-}
+    volumes:
+      - blocklog:/var/lib/kitegate
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    restart: unless-stopped
+    depends_on:
+      kitegate:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false   # only with COMPOSE_PROFILES=local
+    ports:
+      - "127.0.0.1:${WEBUI_PORT:-3000}:8080"
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?run setup first}
+      # The settings below win on every start. Without this, Open WebUI keeps
+      # the values from its first start in its database, so a changed key in
+      # .env would break the connection and a setting switched on in the
+      # admin panel would stay on. Users, chats and models are kept either way.
+      ENABLE_PERSISTENT_CONFIG: "False"
+      # One connection, to the gateway. Nothing else can reach a model.
+      ENABLE_OPENAI_API: "True"
+      OPENAI_API_BASE_URL: http://kitegate:8080/v1
+      OPENAI_API_KEY: ${KITEGATE_API_KEY}
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_DIRECT_CONNECTIONS: "False"
+      # Tells the gateway who is asking (X-OpenWebUI-User-Email).
+      ENABLE_FORWARD_USER_INFO_HEADERS: "True"
+      DEFAULT_MODELS: kids-encyclopedia
+      # Every signed-in user sees every model, so the bundle works without
+      # publishing models by hand. The gateway, not this list, keeps children
+      # on kids-encyclopedia: any other model refuses them. Set to "False" to
+      # manage model visibility per group in Admin Panel > Settings > Models.
+      BYPASS_MODEL_ACCESS_CONTROL: "True"
+      # Features that reach the web, run code or share chats: off.
+      ENABLE_WEB_SEARCH: "False"
+      ENABLE_CODE_EXECUTION: "False"
+      ENABLE_CODE_INTERPRETER: "False"
+      ENABLE_IMAGE_GENERATION: "False"
+      ENABLE_COMMUNITY_SHARING: "False"
+      ENABLE_EVALUATION_ARENA_MODELS: "False"
+      # New sign-ups wait for an admin to approve them.
+      DEFAULT_USER_ROLE: pending
+    volumes:
+      - open-webui:/app/backend/data
+
+  # Installs the photo tool into Open WebUI, so nobody has to paste 500 lines
+  # into the admin panel. Runs on every `up`, is idempotent, and exits.
+  #
+  # Open WebUI stores Workspace tools in its own database and cannot load one
+  # from a file or an environment variable, so the only route is its API. That
+  # needs a token, which needs an account, which is why ADMIN_EMAIL and
+  # ADMIN_PASSWORD exist. Leave them blank and this service does nothing.
+  #
+  # Reuses the open-webui image rather than pulling python: it is already here,
+  # it is a Python app, and provision.py is stdlib-only so it needs nothing
+  # from that image beyond the interpreter.
+  provision:
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    restart: "no"
+    depends_on:
+      open-webui:
+        condition: service_healthy
+    entrypoint: ["python3", "/provision/provision.py"]
+    environment:
+      WEBUI_URL: http://open-webui:8080
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      TOOL_FILE: /provision/dist/kitegate_openwebui_photo.py
+      TOOL_ID: kitegate_photo
+      TOOL_NAME: Kitegate Photo
+      # The children's model, so the tool is callable without an admin
+      # ticking a box. Keep in step with KITEGATE_CHILD_MODELS above.
+      ATTACH_TO_MODELS: kids-encyclopedia
+    volumes:
+      - ./provision.py:/provision/provision.py:ro
+      - ../../dist:/provision/dist:ro
+
+  # COMPOSE_PROFILES=local: a model on this machine instead of a provider.
+  ollama:
+    profiles: [local]
+    image: ollama/ollama:0.40.2
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+
+  # Downloads the model once (several GB), then exits.
+  ollama-pull:
+    profiles: [local]
+    image: ollama/ollama:0.40.2
+    depends_on: [ollama]
+    entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull \"$$MODEL\""]
+    environment:
+      OLLAMA_HOST: ollama:11434
+      MODEL: ${KITEGATE_UPSTREAM_MODEL:-llama3.2:3b}
+    restart: "no"
+
+volumes:
+  open-webui:
+  ollama:
+  # What children typed when they were blocked. Sensitive.
+  blocklog:

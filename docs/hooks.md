@@ -33,6 +33,11 @@ Before each commit:
 | end-of-file-fixer, trailing-whitespace | Rewrite the file; re-stage and commit again |
 | owui-filter-built, owui-photo-built | `dist/` matches the package and adapter it is built from |
 
+On the commit message: `conventional-pre-commit`, which checks that the
+message is a Conventional Commit with one of the scopes in `CONTRIBUTING.md`.
+Releases are versioned from these messages. Clones that installed the hooks
+before this hook was added need `pre-commit install` again to get it.
+
 Before each push: `pytest`. Too slow for every commit, fast enough before a
 push, and the same gate CI applies.
 
@@ -129,6 +134,19 @@ $empty = New-TemporaryFile
 $env:GIT_CONFIG_GLOBAL = $empty
 pre-commit install --install-hooks
 Remove-Item Env:GIT_CONFIG_GLOBAL
+```
+
+ggshield forwards only `pre-commit` and `pre-push` to the repository's own
+hooks, so the `commit-msg` check does not run under it. The PR title check in
+CI still applies. To run it locally too, add a `commit-msg` file next to
+ggshield's `pre-commit` (in the directory `git config core.hooksPath` names)
+that forwards in the same way:
+
+```sh
+#!/bin/sh
+_local=$(git rev-parse --git-common-dir)/hooks/commit-msg
+[ -f "$_local" ] && exec "$_local" "$@"
+exit 0
 ```
 
 Then check it worked by committing something harmless: you should see this

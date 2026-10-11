@@ -47,6 +47,54 @@ kitegate = ["packs/*.yaml", "packs/*.yaml.sig"]
 # and dist/ is generated from src/, which is scanned.
 exclude_dirs = ["tests", "dist", "build", ".venv", ".git"]
 
+[tool.semantic_release]
+# Releases are cut by .github/workflows/release.yml on every push to main,
+# from the Conventional Commit messages since the last tag (PR titles, as PRs
+# are squash-merged): fix/perf -> patch, feat -> minor, a breaking change ->
+# major, anything else -> no release. While on 0.x a breaking change bumps the
+# minor instead; set major_on_zero = true when ready for 1.0.0.
+commit_parser = "conventional"
+tag_format = "v{version}"
+allow_zero_version = true
+major_on_zero = false
+commit_message = "chore(release): v{version}"
+commit_author = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+version_toml = ["pyproject.toml:project.version"]
+# Every place the version is written out. The two Open WebUI adapters carry it
+# in their frontmatter, which Open WebUI shows in its Functions/Tools list.
+version_variables = [
+    "src/kitegate/__init__.py:__version__",
+    "adapters/openwebui/kitegate_filter.py:version",
+    "adapters/openwebui/kitegate_photo.py:version",
+]
+# Runs after the version is stamped and before the release commit. The pasted
+# Open WebUI files in dist/ are built from the adapters above, so they are
+# rebuilt to carry the new version (CI's --check fails otherwise) and added to
+# the commit via `assets`. The sdist and wheel go to build/pkg, which is
+# ignored, so that only the two tracked files in dist/ are ever committed.
+build_command = "python tools/build_owui_filter.py && python tools/build_owui_photo.py && python -m build --outdir build/pkg"
+assets = ["dist/kitegate_openwebui_filter.py", "dist/kitegate_openwebui_photo.py"]
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = ['''^chore\(release\):''']
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+
+[tool.semantic_release.remote]
+type = "github"
+token = { env = "GH_TOKEN" }
+
+[tool.semantic_release.publish]
+# Attached to the GitHub Release: the package, and the two files people paste
+# into Open WebUI.
+dist_glob_patterns = ["build/pkg/*", "dist/kitegate_openwebui_*.py"]
+upload_to_vcs_release = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Run from a clean checkout with no install. Without this, `pytest` collects

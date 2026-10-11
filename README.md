@@ -253,7 +253,8 @@ until a maintainer re-signs it (`kitegate-pack sign src/kitegate/packs/*.yaml
 --key <project key>`). Propose pack changes in a pull request as usual; the
 maintainer signs on merge.
 
-See `docs/testing.md` for the real-browser test of the Open WebUI filter.
+See `docs/testing.md` for the real-browser test of the Open WebUI filter, and
+`CONTRIBUTING.md` for the commit message format that releases are cut from.
 
 ## Security
 

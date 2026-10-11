@@ -13,8 +13,10 @@ that loads packs: whoever holds it can sign packs your deployment trusts.
 from __future__ import annotations
 
 import argparse
+import getpass
 import glob
 import os
+import subprocess  # nosec B404 - used once, in _restrict_to_owner, with a fixed executable
 import sys
 from pathlib import Path
 from typing import List
@@ -39,6 +41,44 @@ def _read_public(value: str) -> str:
     return path.read_text(encoding="utf-8").strip() if path.is_file() else value.strip()
 
 
+def _windows_account() -> str:
+    """DOMAIN\\user for the current account, as icacls wants it."""
+    user = os.environ.get("USERNAME") or getpass.getuser()
+    domain = os.environ.get("USERDOMAIN")
+    return f"{domain}\\{user}" if domain else user
+
+
+def _restrict_posix(path: Path) -> bool:
+    """Mode 0600: readable and writable by the owner, nobody else."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        return False
+    return True
+
+
+def _restrict_windows(path: Path) -> bool:
+    """Remove inherited access and grant the current account alone.
+
+    os.open's mode does nothing on Windows, where a new file inherits the
+    folder's access list (often Administrators, SYSTEM and sometimes Users).
+    """
+    icacls = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe")
+    # A fixed executable and a list of arguments, no shell: nothing in this
+    # call comes from outside the process except the file name.
+    command = [icacls, str(path), "/inheritance:r", "/grant:r", f"{_windows_account()}:F"]
+    try:
+        subprocess.run(command, check=True, capture_output=True, timeout=30)  # nosec B603
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def _restrict_to_owner(path: Path) -> bool:
+    """Make a private key usable by the current account only. True if done."""
+    return _restrict_windows(path) if os.name == "nt" else _restrict_posix(path)
+
+
 def cmd_keygen(args: argparse.Namespace) -> int:
     out = Path(os.path.expanduser(args.out))
     out.mkdir(parents=True, exist_ok=True)
@@ -49,7 +89,14 @@ def cmd_keygen(args: argparse.Namespace) -> int:
     pem, pub = generate_key()
     fd = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="ascii", newline="\n") as fh:
+        # Restricted while the file is still empty, so the key is never
+        # written to a file other accounts can read.
+        restricted = _restrict_to_owner(private)
         fh.write(pem)
+    if not restricted:
+        print(f"WARNING: could not limit {private} to your account. Do it by hand before "
+              "using the key: a private key other accounts can read can sign packs.",
+              file=sys.stderr)
     public.write_text(pub + "\n", encoding="ascii", newline="\n")
     print(f"private key: {private}  (keep it secret, back it up offline)")
     print(f"public key:  {public}")

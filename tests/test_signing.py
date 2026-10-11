@@ -1,5 +1,8 @@
 """Pack signatures: bundled packs, your own packs, and the kitegate-pack tool."""
+import os
 import shutil
+import stat
+import subprocess
 from importlib import resources
 from pathlib import Path
 
@@ -150,6 +153,69 @@ def test_missing_cryptography_fails_closed(pack, key, monkeypatch):
 def test_bad_public_key_is_rejected():
     with pytest.raises(SignatureError):
         PackTrust.from_keys(["not-a-key"])
+
+
+# -- the private key is the owner's alone ----------------------------------------------
+posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows access lists")
+
+
+@posix_only
+def test_keygen_makes_the_private_key_mode_0600(tmp_path):
+    assert packtool(["keygen", "--out", str(tmp_path), "--name", "k"]) == 0
+    assert stat.S_IMODE((tmp_path / "k.pem").stat().st_mode) == 0o600
+
+
+@posix_only
+def test_keygen_tightens_the_key_whatever_the_umask(tmp_path):
+    old = os.umask(0)          # the most permissive umask there is
+    try:
+        assert packtool(["keygen", "--out", str(tmp_path), "--name", "k"]) == 0
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE((tmp_path / "k.pem").stat().st_mode) == 0o600
+
+
+@windows_only
+def test_keygen_leaves_the_private_key_to_the_current_account_only(tmp_path):
+    assert packtool(["keygen", "--out", str(tmp_path), "--name", "k"]) == 0
+    acl = subprocess.run(["icacls", str(tmp_path / "k.pem")], capture_output=True, text=True,
+                         check=True).stdout
+    entries = [line for line in acl.splitlines() if ":(" in line]
+    assert len(entries) == 1, acl                      # one entry: no inherited ones left
+    assert "(I)" not in entries[0], acl                # and it is not inherited
+    assert os.environ["USERNAME"].lower() in entries[0].lower()
+
+
+def test_the_windows_restriction_removes_inheritance_and_grants_only_the_account(tmp_path, monkeypatch):
+    from kitegate import packtool as tool
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"], seen["kwargs"] = command, kwargs
+
+    monkeypatch.setattr(tool.subprocess, "run", fake_run)
+    monkeypatch.setattr(tool, "_windows_account", lambda: "HOST\\owner")
+    key = tmp_path / "k.pem"
+    assert tool._restrict_windows(key) is True
+    assert seen["command"][0].lower().endswith("icacls.exe")
+    assert seen["command"][1:] == [str(key), "/inheritance:r", "/grant:r", "HOST\\owner:F"]
+    assert seen["kwargs"].get("shell") is not True      # a list of arguments, never a shell string
+
+
+@pytest.mark.parametrize("error", [OSError("no icacls"), subprocess.CalledProcessError(5, "icacls")])
+def test_a_failed_restriction_is_reported_not_hidden(tmp_path, monkeypatch, capsys, error):
+    from kitegate import packtool as tool
+
+    def failing(command, **kwargs):
+        raise error
+
+    monkeypatch.setattr(tool.subprocess, "run", failing)
+    assert tool._restrict_windows(tmp_path / "k.pem") is False
+    # And keygen, told the restriction failed, still writes the key but says so.
+    monkeypatch.setattr(tool, "_restrict_to_owner", lambda path: False)
+    assert tool.main(["keygen", "--out", str(tmp_path), "--name", "k"]) == 0
+    assert "could not limit" in capsys.readouterr().err
 
 
 # -- kitegate-pack ------------------------------------------------------------------

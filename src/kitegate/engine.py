@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
 from .core import DISTRESS, DISTRESS_REPLY, HARD_BLOCK, PERSONA, PERSONA_REPLY, PII, Rule
+from .normalise import variants
 from .packs import ValuesPack
 
 
@@ -42,6 +43,12 @@ PASS = Verdict(allowed=True)
 
 
 def _first_match(texts: Iterable[str], rules: List[Rule]) -> Optional[str]:
+    """The first rule any text matches, as typed or as a reader would see it.
+
+    `texts` has been through `variants`: the typed text and its normalised
+    form, so a zero-width space, a look-alike letter or "p0rn" does not walk
+    past a rule that would have caught the plain spelling.
+    """
     for text in texts:
         if not text:
             continue
@@ -61,6 +68,8 @@ class PolicyEngine:
         The system prompt necessarily names what it forbids, so screening it
         blocks every request. Callers must pass role == "user" content only.
         """
+        typed = child_turns
+        child_turns = variants(typed)
         label = _first_match(child_turns, DISTRESS)
         if label:
             return Verdict(False, "distress", label,
@@ -74,7 +83,8 @@ class PolicyEngine:
         if label:
             return Verdict(False, "redirect", label, self.pack.replies.redirect)
 
-        label = _first_match(child_turns, PII)
+        # Digits are the point of these patterns, so no letter-for-digit swaps.
+        label = _first_match(variants(typed, leet=False), PII)
         if label:
             return Verdict(False, "pii", label, self.pack.replies.pii)
 
@@ -82,6 +92,7 @@ class PolicyEngine:
 
     def screen_response(self, model_texts: List[str]) -> Verdict:
         """Screen the model's output, including tool-call arguments."""
+        model_texts = variants(model_texts)
         label = _first_match(model_texts, HARD_BLOCK)
         if label:
             return Verdict(False, "hard_block", label, self.pack.replies.hard_block)

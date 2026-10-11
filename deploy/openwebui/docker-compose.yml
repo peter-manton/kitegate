@@ -53,6 +53,14 @@ services:
       KITEGATE_IMAGE_HOSTS: ${KITEGATE_IMAGE_HOSTS:-}
     volumes:
       - blocklog:/var/lib/kitegate
+    # Hardening. The image is distroless and runs as a non-root user; these stop
+    # it writing anywhere but the block-log volume, gaining privileges or
+    # acquiring Linux capabilities. It listens on 8080, above the privileged
+    # range, so it needs no capability.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.12.0@sha256:1565038903151ced924b5a3226f73f40f16963df4b910441f6391f10144afdaa
@@ -93,6 +101,13 @@ services:
       ENABLE_IMAGE_GENERATION: "False"
       ENABLE_COMMUNITY_SHARING: "False"
       ENABLE_EVALUATION_ARENA_MODELS: "False"
+      # Open WebUI 0.12 sends about forty built-in tools (notes, memory,
+      # tasks, automations, fetch_url, ...) with every chat from the browser.
+      # None of them belong in a children's encyclopedia, and a small model
+      # lost among them never reaches the gateway's find_photo and answers
+      # with something like "which task would you like to update?". Off for
+      # every model, so the gateway's own tool is the only one on offer.
+      DEFAULT_MODEL_METADATA: '{"capabilities": {"builtin_tools": false}}'
       # New sign-ups wait for an admin to approve them.
       DEFAULT_USER_ROLE: pending
     volumes:

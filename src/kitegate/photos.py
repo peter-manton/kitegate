@@ -47,9 +47,12 @@ Whatever a provider returns is still subject to the image policy in
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
+
+from .normalise import variants
 
 # ---------------------------------------------------------------------------
 # SUBJECT SCREENING, and why it lives here rather than only in the engine
@@ -81,6 +84,27 @@ BLOCKED_SUBJECT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+def is_blocked(text: str) -> bool:
+    """Whether a subject or title is imagery this project will not fetch.
+
+    Checks the text as given and in its normalised forms (normalise.py), so a
+    zero-width space or a look-alike letter does not walk past the list.
+    """
+    return any(BLOCKED_SUBJECT.search(v) for v in variants([text or ""]))
+
+
+#: Characters that cannot be in a subject. "|" separates several titles in a
+#: MediaWiki query, so one subject could fetch many articles; the others are
+#: not allowed in a page title at all.
+_TITLE_FORBIDDEN = set("|#<>[]{}")
+
+
+def has_forbidden_characters(subject: str) -> bool:
+    """True for a control or invisible character, or one a page title cannot hold."""
+    return any(ch in _TITLE_FORBIDDEN or unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Co", "Cn")
+               for ch in subject or "")
+
 
 # Deliberately does not name the word that matched. Telling a model exactly
 # what tripped a filter invites it to retry around it.
@@ -209,6 +233,11 @@ class Wikimedia(PhotoProvider):
             title = page.get("title")
             if not title:
                 continue
+            if is_blocked(title):
+                # A redirect can land an innocent subject on an unsuitable
+                # article, so the title it resolved to is checked, not only
+                # the words that were asked for.
+                continue
             thumb = (page.get("thumbnail") or {}).get("source")
             caption = shorten(page.get("extract") or "")
             if not thumb:
@@ -275,7 +304,7 @@ class Nasa(PhotoProvider):
                             and l.get("href")), None)
             if not title or not preview:
                 continue
-            if BLOCKED_SUBJECT.search(title):
+            if is_blocked(title):
                 continue
             return title, Photo(title, preview, shorten(meta.get("description") or ""),
                                 self.name, urlsplit(endpoint).hostname or endpoint)
@@ -333,7 +362,7 @@ def next_search_title(titles: List[str], tried: List[str]) -> Optional[str]:
     for title in titles:
         if not title or title.strip().lower() in seen:
             continue
-        if BLOCKED_SUBJECT.search(title):
+        if is_blocked(title):
             continue
         return title
     return None

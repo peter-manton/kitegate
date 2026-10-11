@@ -216,3 +216,29 @@ def test_tracking_is_stripped_but_real_parameters_are_kept():
     assert strip_tracking("https://h/x.jpg?utm_source=a&width=100") == "https://h/x.jpg?width=100"
     assert strip_tracking("https://h/x.jpg") == "https://h/x.jpg"
     assert strip_tracking("https://h/x.jpg?utm_source=a") == "https://h/x.jpg"
+
+
+# -- a redirect must not land on an unsuitable article --------------------------
+def test_a_lookup_that_resolves_to_a_blocked_title_gives_no_photo():
+    # MediaWiki follows redirects, so an innocent subject can come back as
+    # another article. Its title is checked, not only the words asked for.
+    data = {"query": {"pages": {"1": {
+        "title": "Nudity", "thumbnail": {"source": "https://upload.wikimedia.org/x.jpg"}}}}}
+    assert Wikimedia().read_lookup(data, "https://en.wikipedia.org") == (None, None)
+
+
+def test_a_blocked_title_is_found_through_look_alike_characters():
+    from kitegate.photos import is_blocked
+    assert is_blocked("Nu\u200bdity") and is_blocked("n\u0430ked") and not is_blocked("Tiger")
+
+
+@pytest.mark.parametrize("subject", ["tiger|Mercury", "tiger\x1fMercury", "tiger\n", "a<b>c", "{x}"])
+def test_a_subject_that_could_name_several_pages_has_forbidden_characters(subject):
+    from kitegate.photos import has_forbidden_characters
+    assert has_forbidden_characters(subject)
+
+
+@pytest.mark.parametrize("subject", ["tiger", "Great Pyramid of Giza", "Mercury (planet)", "caf\u00e9"])
+def test_an_ordinary_subject_has_no_forbidden_characters(subject):
+    from kitegate.photos import has_forbidden_characters
+    assert not has_forbidden_characters(subject)

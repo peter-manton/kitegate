@@ -48,8 +48,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import httpx
 
 from ..core import PII
-from ..photos import (BLOCKED_SUBJECT, REFUSED_SUBJECT_REPLY, Photo, PhotoProvider,
-                      get_providers, next_search_title)
+from ..normalise import variants
+from ..photos import (REFUSED_SUBJECT_REPLY, Photo, PhotoProvider, get_providers,
+                      has_forbidden_characters, is_blocked, next_search_title)
 
 logger = logging.getLogger("kitegate.photos")
 
@@ -72,6 +73,8 @@ _MAX_CACHED = 512
 NO_SUBJECT_REPLY = "No subject was given, so no picture was looked up."
 LONG_SUBJECT_REPLY = ("That subject is too long. Pass a short noun phrase such as \"tiger\" "
                       "or \"Great Pyramid of Giza\", or answer in words.")
+INVALID_SUBJECT_REPLY = ("That subject has characters that cannot be looked up. Pass a short noun "
+                         "phrase such as \"tiger\", or answer in words.")
 UNAVAILABLE_REPLY = "That tool is not available. Answer in words."
 TOO_MANY_REPLY = "Only a few pictures can be looked up for one answer. Answer with the ones you have."
 BUSY_REPLY = ("The picture library is busy at the moment and would not answer. This is "
@@ -141,12 +144,18 @@ def refused(subject: str) -> Optional[str]:
         return NO_SUBJECT_REPLY
     if len(subject) > MAX_SUBJECT:
         return LONG_SUBJECT_REPLY
-    if BLOCKED_SUBJECT.search(subject):
+    # Blocked first: a blocked word hidden behind an invisible character gets
+    # the reply that says not to rephrase, not one that says what to fix.
+    if is_blocked(subject):
         return REFUSED_SUBJECT_REPLY
+    if has_forbidden_characters(subject):
+        return INVALID_SUBJECT_REPLY
     # Response-side screening has no PII tier (it false-positives on
     # encyclopedia text), but this string goes to a third party, so a phone
-    # number or postcode in it is refused here.
-    if any(pattern.search(subject) for _, pattern in PII):
+    # number or postcode in it is refused here. The folded form is checked as
+    # well as the typed one; letters are not swapped for digits, which are the
+    # point of these patterns.
+    if any(pattern.search(text) for text in variants([subject], leet=False) for _, pattern in PII):
         return REFUSED_SUBJECT_REPLY
     return None
 

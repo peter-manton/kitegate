@@ -6,7 +6,7 @@ core and values packs; they differ in where the check runs.
 | You have | Use | Section |
 |---|---|---|
 | Nothing yet, and want a chat site for children | the Open WebUI bundle | [1](#1-out-of-the-box-open-webui-with-kitegate) |
-| Open WebUI already | the gateway, or the single-file filter | [2](#2-an-existing-open-webui) |
+| Open WebUI already | the gateway | [2](#2-an-existing-open-webui) |
 | LibreChat | the gateway | [3](#3-librechat) |
 | Your own app | the gateway with any OpenAI SDK | [4](#4-your-own-app) |
 | LiteLLM already | the gateway in front of LiteLLM | [5](#5-an-existing-litellm) |
@@ -36,19 +36,18 @@ On Windows, double-click `deploy\openwebui\start.cmd`, or run `.\setup.ps1`.
 Setup asks for:
 
 - a provider API key, URL and model (any OpenAI-compatible API; the defaults
-  are OpenAI and `gpt-4.1-mini`). Leave the key blank to run `llama3.2:3b`
+  are OpenAI and `gpt-4.1-mini`). Leave the key blank to run `gemma4:e2b`
   locally with Ollama instead; `./setup.sh --local` or `.\setup.ps1 -Local`
   skips the question. The local model is a download of several GB on the
   first start.
 - the values pack: `secular-neutral`, `uk-school` or `christian-family`
 - the children's account emails, comma-separated
-- your own admin name, email and password
 
-It generates the secrets, writes `.env` (never commit it), starts everything,
-creates your admin account and installs the photo tool. Then:
+It generates the secrets, writes `.env` (never commit it) and starts
+everything. Then:
 
-1. Open <http://127.0.0.1:3000> and sign in with the admin email and password
-   you gave setup.
+1. Open <http://127.0.0.1:3000> and create the first account. It becomes the
+   admin, so do this straight away.
 2. In Admin Panel > Users, add an account for each child, using an email you
    listed. Anyone else who signs up waits for your approval.
 3. Sign in as a child. The model is **kids-encyclopedia**: every question and
@@ -67,16 +66,13 @@ browser ─► Open WebUI ─► kitegate ─► your provider
 - Web search, code execution, image generation, sharing and arena models are
   off. Titles and follow-ups are generated through the gateway, so they are
   screened for children's chats.
-- The photo tool is installed and enabled on `kids-encyclopedia` by the
-  `provision` service, which runs on every `up` and does nothing if the tool
-  is already current. Pictures from it are still subject to
-  `KITEGATE_IMAGE_POLICY` (section 9).
 - Pictures in a reply are screened rather than forbidden: one must come from a
-  curated source and pass a moderation check. Setup reuses your provider key
-  for that when the provider is OpenAI, and says so; otherwise pictures stay
-  off until `KITEGATE_IMAGE_SCAN_API_KEY` in `.env` holds an OpenAI key.
-  Either way nothing appears until you install the photo tool by hand
-  (section 9), and `KITEGATE_IMAGE_POLICY=block` removes pictures outright.
+  curated source and pass a moderation check. The gateway finds them itself
+  (section 9), so nothing is installed in Open WebUI. Setup reuses your
+  provider key for the check when the provider is OpenAI, and says so;
+  otherwise pictures stay off until `KITEGATE_IMAGE_SCAN_API_KEY` in `.env`
+  holds an OpenAI key, and `KITEGATE_IMAGE_POLICY=block` removes them
+  outright.
 - Only Open WebUI is published, on 127.0.0.1. The gateway and Ollama are
   reachable only on the internal Docker network.
 - Every model is visible to every signed-in user
@@ -109,8 +105,8 @@ port 3000 on a network interface without TLS.
 
 ## 2. An existing Open WebUI
 
-**Gateway (recommended).** Children's chats, titles and follow-ups are all
-screened, blocks read as normal replies, and distress can alert an adult.
+Children's chats, titles and follow-ups are all screened, blocks read as
+normal replies, and distress can alert an adult.
 
 1. Run the gateway (Docker):
 
@@ -125,12 +121,16 @@ screened, blocks read as normal replies, and distress can alert an adult.
    connection at `http://kitegate:8080/v1`, following
    `adapters/openwebui/gateway-connection.md`.
 
-**Single-file filter**, when you cannot run another container: paste
-`dist/kitegate_openwebui_filter.py` into Admin Panel > Functions, enable it,
-make it Global, and set the valves `pack`, `child_model_ids` and
-`child_user_emails`. Needs Open WebUI 0.11.2 or later. It cannot screen titles
-or follow-ups (it refuses children's models while those are on) and cannot
-alert an adult.
+A system prompt set on the children's model in Open WebUI (or a user's own,
+under Settings) still works, but it is folded into the gateway's system
+message after the core and the pack, under a line ranking it below them. Set
+`KITEGATE_CLIENT_SYSTEM=drop` to ignore it altogether. Section 8 has the
+order.
+
+Earlier releases also shipped a single-file Open WebUI filter for installs
+that could not run another container. It has been removed: it could not alert
+an adult, screen pictures, run the photo tool or own the system prompt. Remove
+it from Admin Panel > Functions and connect through the gateway instead.
 
 ## 3. LibreChat
 
@@ -145,6 +145,7 @@ alert an adult.
 `ENDPOINTS=custom` removes every route to a model except the gateway. Keep
 agents, MCP servers, web search, file search and code execution off for
 child accounts; check those switches against your LibreChat version.
+Pictures need none of those: the gateway runs its own photo tool (section 9).
 
 ## 4. Your own app
 
@@ -255,9 +256,15 @@ showing it. `verdict.tier` says why something was blocked: `distress`,
 interest; output side only). On `distress`, tell an adult as well: that is your
 app's job here.
 
-If you call the engine directly like this, send `kitegate.core.CORE_FRAMING` to
-the model as a system message. It is the one instruction a pack cannot change,
-and it is what stops most `persona` blocks being needed in the first place.
+If you call the engine directly like this, send `kitegate.core.CORE_FRAMING`
+to the model as the first system message, followed by the pack's `framing`.
+It is the instruction a pack cannot change: one paragraph per core check
+(persona, adult and dangerous material, personal details, distress) plus a
+line on precedence and one on text from web pages. It is what stops most
+blocks being needed in the first place. Put any instructions of your own after
+it, not before, and do not add a second system message after the
+conversation has started: the most recent instruction is the one a model
+weighs most.
 
 ## 8. Your own values pack
 
@@ -279,12 +286,34 @@ KITEGATE_REQUIRE_SIGNED_PACKS=true
 ```
 
 In Docker, mount the pack and its `.sig` into the gateway container (for
-example at `/packs`). The Open WebUI filter has the same settings as the
-valves `pack_public_keys` and `require_signed_packs`. A pack sets who a child
-is sent to, which topics go to that person, the reply wording and the framing
-given to the model; it cannot switch off any part of the safety core. The
-pack's framing is added after the core framing, never instead of it, so a pack
-can set tone and worldview but cannot let the model pose as a child's friend.
+example at `/packs`). A pack sets who a child is sent to, which topics go to
+that person, the reply wording and the framing given to the model; it cannot
+switch off any part of the safety core. The pack's framing is added after the
+core framing, never instead of it, so a pack can set tone and worldview but
+cannot let the model pose as a child's friend.
+
+The core framing deliberately says nothing about voice, tone or how to word a
+refusal, because the bundled packs disagree on those (`uk-school` avoids "I";
+`christian-family` is warm and first person). Your pack's `framing` is the
+place for them. Do not ask the model to role-play, take on a persona or set
+the rules aside: `tests/test_rules.py` refuses a bundled pack that does.
+
+For a children's model the gateway sends exactly one system message, in this
+order:
+
+1. `CORE_FRAMING`, always.
+2. The pack's `framing`, unless `KITEGATE_INJECT_FRAMING=false`.
+3. With `KITEGATE_CLIENT_SYSTEM=fold` (the default), any `system` or
+   `developer` messages the front end sent, wherever they were in the
+   conversation, under a line saying they cannot change the rules above, and
+   then a reminder that those rules still apply. With `drop`, nothing.
+
+The client's own instruction messages are then removed from the
+conversation, so nothing after the gateway's message can out-rank it. Folded
+text is not screened (it is not the child's words, and an admin's "never
+discuss self-harm" would otherwise block every question); the reply is.
+Adult passthrough models get none of this: no framing, and their system
+prompts are left as they are.
 
 ## 9. Showing pictures
 
@@ -297,42 +326,35 @@ are scanned and shown; leave it empty and they are removed, because there is
 no safe way to show an unscanned one. `setup.sh` fills it in for you when your
 provider is OpenAI, since the same key works for both.
 
-The first job is a manual step: Open WebUI cannot install a tool from the
-environment, so until you add the photo tool (9a) there are no pictures to
-screen and children get text-only answers. The model will say it cannot show
-pictures, which is accurate rather than a fault.
+The first job needs nothing from you. The gateway runs the photo tool itself
+(9a), so it works the same behind Open WebUI, LibreChat or your own app, with
+nothing installed in any of them.
 
-### 9a. Getting a picture: the photo tool
+### 9a. Getting a picture: the gateway's photo tool
 
-`dist/kitegate_openwebui_photo.py` is a single-file Open WebUI **tool** that
-finds one real photograph for a subject.
+For a children's model the gateway offers the model one tool, `find_photo`,
+and runs it when the model asks:
 
-**In the bundle (section 1) this is automatic.** Open WebUI keeps Workspace
-tools in its own database and cannot load one from a file or an environment
-variable, so the `provision` service does what the admin panel does: it signs
-in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`, POSTs the built tool to
-Open WebUI's API, and enables it on `kids-encyclopedia`. It runs on every
-`docker compose up -d`, updates the tool when the built file has changed, and
-does nothing when it is already current. Leave `ADMIN_EMAIL` blank to opt out
-and install by hand instead.
-
-Rebuild after changing a provider, then restart to ship it:
-
-```bash
-python tools/build_owui_photo.py
-cd deploy/openwebui && docker compose up -d
+```
+child ─► front end ─► gateway ─► model
+                         │  ◄── find_photo("tiger")
+                         ├─► Wikipedia (the subject string only)
+                         │  ──► photo and caption ─► model ─► answer
+                         ▼
+               text screened, picture scanned ─► child
 ```
 
-**Elsewhere**, install it in Admin Panel > Functions > Tools and enable it on
-the children's model, or run the same provisioner against your own instance:
+The model decides when a picture would help; "what is 7 times 8" costs no
+lookup. The front end sees one ordinary reply, streamed if it asked for a
+stream, and never the tool round trip.
 
-```bash
-ADMIN_EMAIL=you@example.org ADMIN_PASSWORD=... \
-WEBUI_URL=http://127.0.0.1:3000 \
-TOOL_FILE=dist/kitegate_openwebui_photo.py \
-ATTACH_TO_MODELS=kids-encyclopedia \
-python3 deploy/openwebui/provision.py
-```
+Before a subject leaves the gateway it is screened as model output (the core
+tiers and the pack), against an imagery list (no anatomy, gore and the like),
+against the personal-detail patterns, and for length, so a whole question is
+never sent where a noun phrase belongs. Only that subject goes to the
+provider, with no identity and none of the conversation. The model gets at
+most two tool rounds and three lookups per round, and is then told to answer
+in words.
 
 It is not an image search. A provider is a narrow, curated source:
 
@@ -341,9 +363,29 @@ It is not an image search. A provider is a narrow, curated source:
 | `wikimedia` (default) | the Wikipedia article lead image | an editor's choice for the subject; Simple English first |
 | `nasa` | NASA's public image library | public domain, no key, **space only** |
 
-Set the `providers` valve to a comma-separated list, tried in order. Keep
+`KITEGATE_PHOTOS` is a comma-separated list, tried in order, or `off`. Keep
 `nasa` after `wikimedia`: it answers confidently about anything, so "tiger"
-returns Enceladus's tiger stripes.
+returns Enceladus's tiger stripes. The tool is not offered when
+`KITEGATE_IMAGE_POLICY` is `block` (including the default with no scan key),
+since every picture would be removed anyway. When the client sends tools of
+its own (Open WebUI 0.12 sends about thirty built-in ones with every chat),
+`find_photo` is added alongside them; a turn that calls one of the client's
+tools goes back to the client, which runs its own.
+
+Small local models sometimes write a tool call as the text of their answer
+instead of making it. The gateway spots a reply that is nothing but such a
+call: one to `find_photo` is run, and anything else is asked again without
+tools, so the child never sees the raw call.
+
+The model needs tool calling. OpenAI's models and `gemma4:e2b` have it. If
+the upstream refuses a request carrying the tool, the gateway logs it, asks
+again without it, and stops offering it to that model, so answers carry on in
+words. The gateway needs outbound HTTPS to Wikipedia (and NASA, if listed).
+
+**Upgrading from the Open WebUI photo tool.** Earlier versions installed a
+"Kitegate Photo" tool into Open WebUI. Delete it in Workspace > Tools, or the
+model is offered two photo tools. `ADMIN_EMAIL` and `ADMIN_PASSWORD` in an
+existing `.env` are no longer read and can be removed.
 
 Open image search is deliberately not offered. It is the largest
 unsafe-content surface in a feature like this, and a media-repository keyword
@@ -354,9 +396,9 @@ Article lead images are a far narrower, better-governed set.
 **Adding your own provider.** Subclass `PhotoProvider` in
 `src/kitegate/photos.py`, implement `lookup` / `read_lookup` (and `search` /
 `read_search` if it needs a second step), register it in `PROVIDERS`, and
-rebuild with `python tools/build_owui_photo.py`. Providers are pure request-
-building and response-parsing with no HTTP, so a test covers one with a
-recorded payload and no network.
+name it in `KITEGATE_PHOTOS`. Providers are pure request-building and
+response-parsing with no HTTP, so a test covers one with a recorded payload
+and no network.
 
 Declare `image_hosts` honestly: it is what goes in `KITEGATE_IMAGE_HOSTS`, and
 a missing host means working pictures get dropped with no error anywhere.
@@ -435,12 +477,12 @@ much lower lines instead; lower is stricter, and the defaults are in
   not a reasonable default. When it is on, uploads are forwarded to the model
   and are **not** scanned. A refused upload gets a short reply rather than an
   error.
-- **The single-file Open WebUI filter has no image policy.** It cannot make
-  an outbound call, so it screens text only. Use the gateway where pictures
-  matter.
-- **The photo tool runs in Open WebUI's backend, not through the gateway**, so
-  it screens the subject itself before the request leaves. The picture it
-  returns is checked by the image policy on the way back to the child.
+- **The photo tool chooses a source; it does not make a picture showable.**
+  What it finds is checked by the image policy on the way back to the child
+  like any other picture, and a model that swaps in a picture from elsewhere
+  has it removed by the host allowlist.
+- **The model has to copy the picture into its answer.** If it drops or
+  garbles the link there is no picture; the words are unaffected.
 - Removals are recorded in the block log and in the `kitegate.images` object
   on the response, so an adult can see that a picture was dropped and why.
   The child is not told, because a missing photo needs no explanation.

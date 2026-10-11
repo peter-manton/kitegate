@@ -49,16 +49,24 @@ admin, and each child gets a sign-in.
 - **The framing is yours too.** A pack tells the model how to speak to a child:
   reading level, neutral wording where people disagree, no personal questions.
   `uk-school`, for one, asks for a hint or the first step on homework before a
-  full answer. A pack adds to the core's own framing (the tool is not a person,
-  not a friend, does not flirt) and cannot replace it.
+  full answer. A pack adds to the core's own framing and cannot replace it.
+  That framing tells the model, in every pack, what each core check is there to
+  stop: posing as a person or a friend, adult or dangerous material, asking for
+  personal details, and leaving a child alone with distress. The checks screen
+  the reply anyway; the framing means fewer replies need replacing.
+- **The front end cannot out-rank it.** The gateway's system message is the
+  only one a children's model gets. A front end's own system prompt is folded
+  in after the core and the pack, ranked below them, or dropped
+  (`KITEGATE_CLIENT_SYSTEM=drop`).
 - **Pictures are screened, not forbidden.** A child sees a photograph only if
   it came from a curated source (a Wikipedia article's lead image, NASA's
   public library) *and* a moderation model did not object to it. Both checks
   are on by default; the scan needs an OpenAI key, which setup reuses from your
   provider when that is OpenAI. No key means no pictures, because an unscanned
   one is never shown, and `KITEGATE_IMAGE_POLICY=block` turns them off
-  outright. Open image search is deliberately not offered. Getting pictures at
-  all also needs the photo tool installed in Open WebUI by hand.
+  outright. Open image search is deliberately not offered. The gateway fetches
+  the photographs itself when the model asks for one, so there is nothing to
+  install in Open WebUI or LibreChat.
 - **You can see what happened.** Blocks go to a log you can read, and distress
   can alert you. That log is what children typed, so treat it as sensitive.
 
@@ -120,8 +128,7 @@ kitegate-pack verify my-pack.yaml --key ~/.kitegate/family-packs.pub
 ```
 
 Where packs are loaded, set `KITEGATE_PACK_KEYS` to your public key (comma
-separated for several) and `KITEGATE_REQUIRE_SIGNED_PACKS=true`. The Open
-WebUI filter has the same two settings as valves. Keep the private key off
+separated for several) and `KITEGATE_REQUIRE_SIGNED_PACKS=true`. Keep the private key off
 any machine that serves children: whoever holds it can sign packs you trust.
 
 ## Deploy it: one gateway for every front end
@@ -140,6 +147,16 @@ history, asks upstream for the whole reply, screens it, and only then answers
 (replaying it as a stream if asked). Blocks come back as a normal reply in the
 pack's words, with a `kitegate` verdict object alongside for apps that record
 them. Distress goes to an optional block log and alert webhook.
+
+Photographs come from the gateway too. For a children's model it offers the
+model one tool, `find_photo`, and runs it itself: the model asks for "tiger",
+the gateway screens that subject, fetches the Wikipedia article's lead image,
+hands it back, and the child gets one screened answer with the picture in it.
+The front end never sees the round trip, so every front end gets pictures
+with nothing installed. `KITEGATE_PHOTOS` picks the providers (`wikimedia` by
+default, `nasa` for space) or turns the tool `off`; it is off anyway when
+pictures are blocked. The model needs tool calling; one without it answers in
+words.
 
 ```bash
 pip install ".[gateway]"                    # or the Docker image below
@@ -185,26 +202,13 @@ Children's messages, their email and the gateway key cross every hop.
 - The block log is what children typed when blocked. Treat its volume as
   sensitive data at rest.
 
-## Other adapters
+## Routers
 
-- **Open WebUI filter**, for installs that cannot run a sidecar: paste
-  `dist/kitegate_openwebui_filter.py` into Admin Panel > Functions, enable it
-  and make it Global. Set the valves: `pack`, `child_model_ids`,
-  `child_user_emails`. Needs Open WebUI 0.11.2 or later. It holds streamed
-  replies until they are screened, but cannot screen titles or follow-ups
-  (it refuses children's models while those are on) and cannot alert an adult.
-  Rebuild after changing the package: `python tools/build_owui_filter.py`.
-- **Open WebUI photo tool**, optional:
-  `dist/kitegate_openwebui_photo.py` finds one real photograph for a subject
-  from a narrow, curated provider (`wikimedia` article lead images, `nasa` for
-  space). Install it in Admin Panel > Functions > Tools and enable it on the
-  children's model; the gateway already allows both providers' image hosts, so
-  only a provider you write yourself needs adding to `KITEGATE_IMAGE_HOSTS`.
-  Not an image search, and deliberately not one. Rebuild with
-  `python tools/build_owui_photo.py`.
-- **LiteLLM or another router**: not an adapter, an upstream. Point
-  `KITEGATE_UPSTREAM_URL` at it and keep front ends off it
-  (`docs/quickstart.md`, section 5).
+LiteLLM or another router is not an adapter but an upstream. Point
+`KITEGATE_UPSTREAM_URL` at it and keep front ends off it
+(`docs/quickstart.md`, section 5). Every front end goes through the gateway;
+there is no in-process Open WebUI filter any more, because it could not alert
+an adult, screen pictures, run the photo tool or own the system prompt.
 
 ## Limitations
 
@@ -217,9 +221,12 @@ Children's messages, their email and the gateway key cross every hop.
   control: the `sexual/minors` category is text-only upstream. Without
   `KITEGATE_IMAGE_SCAN_API_KEY` there is nothing to check with, so pictures
   are removed instead. Children's own uploads are refused unless
-  `KITEGATE_IMAGE_UPLOADS=allow`, and are never scanned. The single-file Open
-  WebUI filter has no image policy at all, so use the gateway where pictures
-  matter. `docs/quickstart.md` section 9 has the detail.
+  `KITEGATE_IMAGE_UPLOADS=allow`, and are never scanned.
+  `docs/quickstart.md` section 9 has the detail.
+- The framing is guidance. A model can ignore it, and a folded client system
+  prompt still reaches the model; the reply checks are what hold either way.
+  Adult passthrough models get no framing and their system prompts are left
+  alone.
 
 Before deploying to children, read `docs/regulation.md`. Nothing here is
 legal advice.
@@ -229,8 +236,6 @@ legal advice.
 ```bash
 pip install -e ".[dev]"
 pytest
-python tools/build_owui_filter.py --check   # dist/ is in step with the source
-python tools/build_owui_photo.py --check
 ```
 
 The commit hooks run a secret scanner and a Python SAST pass over what you
@@ -253,8 +258,8 @@ until a maintainer re-signs it (`kitegate-pack sign src/kitegate/packs/*.yaml
 --key <project key>`). Propose pack changes in a pull request as usual; the
 maintainer signs on merge.
 
-See `docs/testing.md` for the real-browser test of the Open WebUI filter, and
-`CONTRIBUTING.md` for the commit message format that releases are cut from.
+See `docs/testing.md` for how the suite is organised, and `CONTRIBUTING.md`
+for the commit message format that releases are cut from.
 
 ## Security
 

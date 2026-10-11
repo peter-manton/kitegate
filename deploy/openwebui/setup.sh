@@ -32,7 +32,7 @@ if [ ! -f .env ]; then
   if [ "$mode" = local ]; then
     provider_url=http://ollama:11434/v1
     set_var KITEGATE_UPSTREAM_URL "$provider_url"
-    set_var KITEGATE_UPSTREAM_MODEL "llama3.2:3b"
+    set_var KITEGATE_UPSTREAM_MODEL "gemma4:e2b"
     echo "COMPOSE_PROFILES=local" >> .env
   else
     set_var KITEGATE_UPSTREAM_API_KEY "$key"
@@ -57,24 +57,6 @@ if [ ! -f .env ]; then
   [ -n "$pack" ] && set_var KITEGATE_PACK "$pack"
   printf "Children's account emails, comma-separated (can be added later in .env): "; read -r kids
   [ -n "$kids" ] && set_var KITEGATE_CHILD_USERS "$kids"
-
-  # The admin account is created here rather than in the browser, because the
-  # photo tool is installed through Open WebUI's API and that needs a token,
-  # which needs an account. Leave the email blank to sign up in the browser
-  # instead; the tool then has to be installed by hand.
-  printf "Your (grown-up) name [Admin]: "; read -r adminname
-  [ -n "$adminname" ] && set_var ADMIN_NAME "$adminname"
-  printf "Your admin email, for signing in (blank to do this in the browser): "; read -r adminemail
-  if [ -n "$adminemail" ]; then
-    set_var ADMIN_EMAIL "$adminemail"
-    adminpass=
-    while [ -z "$adminpass" ]; do
-      printf "Admin password (at least 8 characters): "
-      stty -echo 2>/dev/null; read -r adminpass; stty echo 2>/dev/null; echo
-      [ ${#adminpass} -lt 8 ] && { echo "Too short."; adminpass=; }
-    done
-    set_var ADMIN_PASSWORD "$adminpass"
-  fi
   chmod 600 .env
   echo "Wrote .env"
   # Said plainly, because "no pictures" and "unchecked pictures" look the same
@@ -85,25 +67,8 @@ fi
 
 grep -q '^COMPOSE_PROFILES=local' .env && echo "The first start downloads the local model (several GB). This can take a while."
 
-# The photo tool is built from the package, so build it before starting: the
-# provision service mounts dist/ and installs whatever is there.
-if command -v python3 >/dev/null 2>&1; then
-  python3 ../../tools/build_owui_photo.py >/dev/null 2>&1 || true
-fi
-
 docker compose up -d --build
 port=$(sed -n 's/^WEBUI_PORT=//p' .env); port=${port:-3000}
-admin=$(sed -n 's/^ADMIN_EMAIL=//p' .env)
 echo
-if [ -n "$admin" ]; then
-  # Wait for the one-shot provisioner so its result is part of setup's output
-  # rather than something to go looking for in the logs.
-  docker compose wait provision >/dev/null 2>&1 || true
-  docker compose logs provision --no-log-prefix 2>/dev/null | tail -5
-  echo
-  echo "Open http://127.0.0.1:${port} and sign in as ${admin}."
-else
-  echo "Open http://127.0.0.1:${port} and create the first account: it becomes the admin."
-  echo "The photo tool was NOT installed: see docs/quickstart.md section 9."
-fi
+echo "Open http://127.0.0.1:${port} and create the first account: it becomes the admin."
 echo "Then add each child in Admin Panel > Users with an email listed in KITEGATE_CHILD_USERS."

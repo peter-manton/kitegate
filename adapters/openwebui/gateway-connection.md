@@ -23,7 +23,11 @@ show as normal replies.
    generated on the children's model and screened.
 5. Keep web search, code execution and tools off for children's models.
 
-The in-process filter (`dist/kitegate_openwebui_filter.py`) remains for
-installs that cannot run a sidecar. Running both is harmless but the filter
-then refuses children's models while title generation is on, which the
-gateway setup does not need.
+6. A system prompt on the children's model (Admin Panel > Models), or a
+   user's own under Settings, is folded into the gateway's system message
+   after the core and pack framing, ranked below them. Set
+   `KITEGATE_CLIENT_SYSTEM=drop` on the gateway to ignore it instead.
+
+The in-process Open WebUI filter from earlier releases has been removed. If
+it is still installed under Admin Panel > Functions, delete it: it refuses
+children's models while title generation is on, which this setup needs.

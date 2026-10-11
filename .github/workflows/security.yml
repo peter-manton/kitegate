@@ -25,11 +25,11 @@ jobs:
           python-version: "3.14"
       - run: pip install "pre-commit==4.6.2"
       # Skipped here rather than everywhere: TruffleHog is the job below, and
-      # pytest and the two dist checks are test.yml, which installs the
-      # package they need. This job deliberately installs nothing else.
+      # pytest is test.yml, which installs the package it needs. This job
+      # deliberately installs nothing else.
       - run: pre-commit run --all-files --show-diff-on-failure
         env:
-          SKIP: trufflehog,pytest,owui-filter-built,owui-photo-built
+          SKIP: trufflehog,pytest
 
   secrets:
     runs-on: ubuntu-latest

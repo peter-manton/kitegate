@@ -14,8 +14,7 @@ Checking, at load time:
   - an unsigned pack is refused if KITEGATE_REQUIRE_SIGNED_PACKS is true,
     otherwise loaded with a warning.
 
-Make and use keys with the `kitegate-pack` command (packtool.py). The Open
-WebUI build inlines this file, so it must not use relative imports.
+Make and use keys with the `kitegate-pack` command (packtool.py).
 """
 import base64
 import hashlib

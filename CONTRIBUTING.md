@@ -39,7 +39,7 @@ Releases are cut automatically from `main` by python-semantic-release
 | `chore` | Anything else that ships nothing | none |
 | `revert` | Reverting an earlier commit | none |
 
-A breaking change, such as a renamed valve or env var, a changed gateway API,
+A breaking change, such as a renamed env var, a changed gateway API,
 or a removed pack, takes a `!` after the scope (`feat(gateway)!: ...`) or a
 `BREAKING CHANGE:` footer. While the version is 0.x it bumps the minor.
 
@@ -51,9 +51,8 @@ or a removed pack, takes a `!` after the scope (`feat(gateway)!: ...`) or a
 | `packs` | Values packs, signing, `kitegate-pack` |
 | `gateway` | `src/kitegate/gateway/`, `adapters/gateway/` |
 | `images`, `photos` | Image screening, the photo providers |
-| `openwebui`, `librechat`, `nemo` | That adapter |
+| `openwebui`, `librechat`, `nemo` | That front end's or upstream's adapter config |
 | `deploy` | `deploy/` |
-| `tools` | `tools/` |
 | `tests` | Test infrastructure, where `test` alone is not enough |
 | `docs` | Repo-wide docs: README, this file |
 | `ci` | Workflows, hooks, review config |
@@ -68,7 +67,5 @@ same PR.
 ## Before opening a PR
 
 The checklist in the PR template applies. The short version: `pytest`
-passes, `dist/` is rebuilt if you touched `src/kitegate/` or
-`adapters/openwebui/`, and changed packs are left for a maintainer to
-re-sign. Do not edit version numbers or `CHANGELOG.md` by hand. The release
+passes, and changed packs are left for a maintainer to re-sign. Do not edit version numbers or `CHANGELOG.md` by hand. The release
 workflow owns both.

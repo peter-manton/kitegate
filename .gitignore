@@ -15,7 +15,6 @@ blocks.jsonl
 *.jsonl
 *.log
 # Browser-test screenshots show a child's chat window.
-owui-filter-*.png
 test-results/
 playwright-report/
 
@@ -25,7 +24,7 @@ __pycache__/
 *.egg-info/
 .eggs/
 build/
-# dist/ is tracked on purpose: the pasteable filters are built there.
+dist/
 .venv/
 venv/
 .pytest_cache/

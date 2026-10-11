@@ -1,7 +1,7 @@
 """Screening engine: core tiers in a fixed order, plus one values pack.
 
-Framework-free on purpose. The gateway, the Open WebUI filter and the hosted
-service all wrap this, so a bug is fixed in one place.
+Framework-free on purpose. The gateway and the hosted service both wrap this,
+so a bug is fixed in one place.
 
 Order is load-bearing and not configurable:
   request:  distress -> hard block -> pack redirect -> PII

@@ -15,9 +15,8 @@
 # To check the whole tree rather than one commit's worth of changes:
 #   pre-commit run --all-files
 #
-# Two file sets are deliberately never rewritten by a hook:
-#   src/kitegate/packs/*.yaml  - signed; a stripped space breaks the signature
-#   dist/*.py                  - generated; edit the source and rebuild
+# The signed packs are deliberately never rewritten by a hook: a stripped
+# space in src/kitegate/packs/*.yaml breaks the signature.
 
 minimum_pre_commit_version: "4.0.0"
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
@@ -38,16 +37,15 @@ repos:
       # here: the key the packs are signed with.
       - id: detect-private-key
       - id: end-of-file-fixer
-        exclude: ^(dist/|src/kitegate/packs/)
+        exclude: ^src/kitegate/packs/
       # No mixed-line-ending hook: .gitattributes already pins the repo to LF,
       # so on a Windows checkout it rewrites files for a change git cannot see.
       - id: trailing-whitespace
-        exclude: ^(dist/|src/kitegate/packs/)
+        exclude: ^src/kitegate/packs/
 
   # SAST for Python. tests/ is excluded because its asserts are the point of
-  # the file (B101), and dist/ because it is generated from src/, which is
-  # scanned. Exclusions are duplicated in [tool.bandit] so that a run by hand
-  # agrees with the hook.
+  # the file (B101). Exclusions are duplicated in [tool.bandit] so that a run
+  # by hand agrees with the hook.
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4
     hooks:
@@ -57,7 +55,7 @@ repos:
         # pinning it again makes pip refuse to resolve the pair. It supplies
         # the TOML reader that --configfile needs on Python 3.10.
         additional_dependencies: ["bandit[toml]"]
-        exclude: ^(tests/|dist/)
+        exclude: ^tests/
 
   # Commit messages are Conventional Commits with a scope, as releases are
   # versioned from them. Types and scopes are defined in CONTRIBUTING.md; keep
@@ -70,7 +68,7 @@ repos:
         stages: [commit-msg]
         args:
           - --force-scope
-          - --scopes=core,packs,gateway,images,photos,openwebui,librechat,nemo,deploy,tools,tests,docs,ci,repo,deps,deps-dev,release
+          - --scopes=core,packs,gateway,images,photos,openwebui,librechat,nemo,deploy,tests,docs,ci,repo,deps,deps-dev,release
           - feat
           - fix
           - perf
@@ -100,23 +98,6 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit, pre-push]
-
-      # Same gate as CI: the pasteable Open WebUI files in dist/ are built from
-      # the package, so a commit that changes one without the other ships a
-      # filter that does not match its source.
-      - id: owui-filter-built
-        name: Built Open WebUI filter matches its source
-        entry: python tools/build_owui_filter.py --check
-        language: system
-        pass_filenames: false
-        files: ^(src/kitegate/|adapters/openwebui/|tools/|dist/)
-
-      - id: owui-photo-built
-        name: Built Open WebUI photo tool matches its source
-        entry: python tools/build_owui_photo.py --check
-        language: system
-        pass_filenames: false
-        files: ^(src/kitegate/|adapters/openwebui/|tools/|dist/)
 
       # Too slow for every commit, fast enough before a push.
       - id: pytest

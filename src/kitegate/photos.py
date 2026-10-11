@@ -9,8 +9,8 @@ source carefully rather than to filter an open one afterwards.
 Framework-free and HTTP-free, exactly like `images.py`: a provider says what
 request to make and how to read the answer, and the caller does the talking.
 That keeps the package at its two dependencies, makes every provider testable
-against a recorded response with no network, and lets the Open WebUI tool
-inline this file.
+against a recorded response with no network, and leaves the HTTP to the
+gateway (gateway/phototool.py).
 
 ---------------------------------------------------------------------------
 WHY NOT IMAGE SEARCH
@@ -54,14 +54,12 @@ from urllib.parse import urlsplit, urlunsplit
 # ---------------------------------------------------------------------------
 # SUBJECT SCREENING, and why it lives here rather than only in the engine
 # ---------------------------------------------------------------------------
-# A front end executes a tool in its OWN backend. The model's request to call
-# the tool passes through the gateway, so the policy does see the arguments on
-# the response side, but the EXECUTION and the URL it returns do not pass
-# through the gateway before the front end has them. The policy only sees the
-# result on the next round trip.
-#
-# So without a check at this point, the subject string the model invents is the
-# one input to the whole feature that reaches an external API unscreened.
+# The subject string the model invents is the one input to the whole feature
+# that reaches an external API. The gateway screens it with the engine as model
+# output before running the tool (gateway/phototool.py), but the engine's tiers
+# are about conversation: "naked mole rat" is a fine question and a poor image
+# query. So this list is applied on top, to the subject and again to any title
+# a search resolves it to.
 #
 # This list is about IMAGERY, not about conversation. The topic policy belongs
 # to the pack and the engine, and duplicating it here would produce confusing

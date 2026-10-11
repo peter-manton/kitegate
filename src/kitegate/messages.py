@@ -1,11 +1,8 @@
 """Reading OpenAI-style chat payloads, shared by every adapter.
 
 Framework-free like the engine: plain dicts in, plain strings out. Each
-adapter still decides WHICH parts to screen (the Open WebUI filter and the
-gateway differ on history and tool results); this module only knows how to
-read them, so the adapters cannot drift apart on that.
-
-The Open WebUI build inlines this file, so it must not use relative imports.
+adapter still decides WHICH parts to screen; this module only knows how to
+read them, so adapters cannot drift apart on that.
 """
 from typing import FrozenSet, Iterable, List, Mapping, Optional, Union
 

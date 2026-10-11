@@ -14,10 +14,8 @@ reviews:
     enabled: true
     drafts: false
 
-  # Generated or binary: reviewing them is noise. dist/ is checked against its
-  # source in CI instead.
+  # Generated or binary: reviewing them is noise.
   path_filters:
-    - "!dist/**"
     - "!**/*.sig"
     - "!assets/**"
 
@@ -38,10 +36,6 @@ reviews:
         Network-facing. Check authentication on every route, that upstream API
         keys are never echoed or logged, and that timeouts and size limits are
         set on outbound and inbound requests.
-    - path: "adapters/openwebui/**"
-      instructions: >-
-        The built files in dist/ are generated from these sources by tools/.
-        Remind the author to rebuild if this changes and dist/ does not.
     - path: "tests/**"
       instructions: >-
         Fixtures must not contain real children's names, messages or other

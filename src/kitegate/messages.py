@@ -95,6 +95,27 @@ def image_parts(content) -> List[str]:
     return out
 
 
+def readable_content(content, images: bool = False):
+    """A message's content with every part the screen cannot read taken out.
+
+    A string is returned as it is. A list keeps its text parts (and picture
+    parts when `images` is true), each reduced to the fields that matter, so a
+    part cannot carry an extra field to the model that was never screened.
+    """
+    if not isinstance(content, list):
+        return content
+    out = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in _TEXT_PART_TYPES:
+            out.append({"type": kind, "text": str(part.get("text") or "")})
+        elif images and kind in _IMAGE_PART_TYPES:
+            out.append(part)
+    return out
+
+
 def _messages(messages) -> List[dict]:
     return [m for m in (messages or []) if isinstance(m, dict)]
 

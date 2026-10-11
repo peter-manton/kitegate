@@ -375,7 +375,8 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
                 {**body, "messages": messages},
                 upstream_model=settings.child_models[alias.lower()], engine=engine,
                 inject_framing=settings.inject_framing, kind=settings.upstream_kind,
-                nemo_config_id=settings.nemo_config_id, client_system=settings.client_system)
+                nemo_config_id=settings.nemo_config_id, client_system=settings.client_system,
+                allow_images=settings.allow_uploads)
         except Exception:  # fail closed
             logger.exception("kitegate screening failed; blocking")
             return blocked(Verdict(False, "error", "error", ERROR_REPLY), "error", alias, stream,

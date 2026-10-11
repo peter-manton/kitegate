@@ -14,14 +14,14 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tupl
 from ..core import CORE_FRAMING, DISTRESS_REPLY
 from ..engine import PolicyEngine, Verdict
 from ..images import image_urls, strip_images
-from ..messages import content_text, image_parts, tool_call_arguments
+from ..messages import content_text, image_parts, readable_content, tool_call_arguments
 
 logger = logging.getLogger("kitegate.gateway")
 
-# Fields some models return alongside the answer. Output rails do not check
-# reasoning (NeMo says so explicitly), and children do not need it, so it is
-# removed rather than screened.
-_REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details", "thinking")
+# Content part types a reply may keep. Reasoning fields (reasoning_content and
+# the like) are not here, or in _MESSAGE_FIELDS below: output rails do not
+# check reasoning (NeMo says so explicitly) and children do not need it.
+_SCREENED_PART_TYPES = ("text", "input_text", "output_text", "image_url", "input_image", "image")
 
 # NemoGuard content-safety categories that mean "this child may be at risk",
 # not "this child asked for something bad". S6 is suicide and self harm; S7
@@ -229,21 +229,83 @@ def system_message(engine: PolicyEngine, *, inject_framing: bool, client_texts: 
     return "\n\n".join(parts)
 
 
+#: The only request fields a children's model is sent (see upstream_body).
+REQUEST_FIELDS = (
+    "model", "messages", "temperature", "top_p", "top_k", "min_p", "max_tokens",
+    "max_completion_tokens", "stop", "presence_penalty", "frequency_penalty", "seed", "n",
+    "logit_bias", "response_format", "reasoning_effort", "tools", "tool_choice",
+    "parallel_tool_calls")
+# Set by upstream_body itself or deliberately never forwarded, so not worth a log line.
+_HANDLED_FIELDS = {"stream", "stream_options", "user", "guardrails"}
+#: Roles a message may have. "function" is the legacy tool role, whose content
+#: no screen reads, so it is not forwarded.
+MESSAGE_ROLES = ("user", "assistant", "tool")
+
+
+def _clean_tool_calls(calls) -> List[dict]:
+    out = []
+    for call in calls if isinstance(calls, list) else []:
+        fn = call.get("function") if isinstance(call, dict) else None
+        if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+            out.append({"id": call.get("id") or "", "type": "function",
+                        "function": {"name": fn["name"], "arguments": fn.get("arguments") or ""}})
+    return out
+
+
+def clean_messages(messages, images: bool = False) -> List[dict]:
+    """The conversation reduced to what the screens read.
+
+    Instruction roles are kept here and removed by the caller. Any other role
+    is dropped, and a message keeps only role, content, tool calls and the
+    tool-call id: an assistant turn can carry an audio reference, a legacy
+    function call or annotations that no screen looks at.
+    """
+    out = []
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") not in MESSAGE_ROLES + INSTRUCTION_ROLES:
+            continue
+        # Only a user turn may carry a picture, and only when uploads are on.
+        keep_images = images and m.get("role") == "user"
+        clean = {"role": m["role"], "content": readable_content(m.get("content"), keep_images)}
+        calls = _clean_tool_calls(m.get("tool_calls"))
+        if calls and m["role"] == "assistant":
+            clean["tool_calls"] = calls
+        if m["role"] == "tool":
+            clean["tool_call_id"] = str(m.get("tool_call_id") or "")
+        out.append(clean)
+    return out
+
+
 def upstream_body(body: dict, *, upstream_model: str, engine: PolicyEngine,
                   inject_framing: bool, kind: str, nemo_config_id: str,
-                  client_system: str = "fold") -> dict:
+                  client_system: str = "fold", allow_images: bool = False) -> dict:
     if client_system not in CLIENT_SYSTEM_POLICIES:
         # Fail closed: an unknown policy must not read as "leave them as they are".
         raise ValueError(f"client_system must be one of {list(CLIENT_SYSTEM_POLICIES)}")
-    out = dict(body)
+    # An allowlist, not a copy: a children's model is sent the fields below and
+    # nothing else. A field that asks the model for audio or pictures, stores
+    # the conversation or switches on a hosted tool is a way round the screen,
+    # and a field nobody listed is one nobody reviewed. The front end's user
+    # id is dropped with the rest: it is not needed upstream for a child.
+    out = {k: v for k, v in body.items() if k in REQUEST_FIELDS}
+    ignored = sorted(set(body) - set(REQUEST_FIELDS) - _HANDLED_FIELDS)
+    if ignored:
+        logger.info("kitegate: request fields not sent to a children's model: %s", ",".join(ignored))
+    if "tools" in out:
+        # Only functions: the other tool types are hosted tools (search, code)
+        # that run on the provider, out of the gateway's sight.
+        tools = [t for t in out["tools"] if isinstance(t, dict) and t.get("type") == "function"] \
+            if isinstance(out["tools"], list) else []
+        if tools:
+            out["tools"] = tools
+        else:
+            out.pop("tools")
+            out.pop("tool_choice", None)
     out["model"] = upstream_model
     # Always ask for the whole reply: nothing reaches a child before the end
     # of the reply has been screened. Streaming to the client is replayed.
     out["stream"] = False
-    out.pop("stream_options", None)
-    # The front end's user id is not needed upstream for a child.
-    out.pop("user", None)
-    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+    messages = clean_messages(body.get("messages"), images=allow_images)
     # Every client instruction message is taken out of the conversation,
     # wherever it was, so the gateway's is the only one and comes first. Their
     # text is never screened as the child's words (it is not the child's), so
@@ -473,15 +535,28 @@ def add_usage(total: Optional[dict], data: dict) -> Optional[dict]:
     return out
 
 
+#: What a reply to a child may carry. The screens read content, refusal and
+#: tool calls, so those are the only message fields sent on: audio, images,
+#: a legacy function_call, annotations and anything a provider adds next year
+#: would otherwise reach the child unread.
+_REPLY_FIELDS = ("id", "object", "created", "usage", "system_fingerprint", "service_tier")
+_MESSAGE_FIELDS = ("role", "content", "refusal", "tool_calls")
+
+
 def clean_response(data: dict, alias: str, info: Dict[str, Any]) -> dict:
-    out = {k: v for k, v in data.items() if k != "guardrails"}
+    out = {k: v for k, v in data.items() if k in _REPLY_FIELDS}
     out["model"] = alias
     choices = []
-    for choice in data.get("choices") or []:
-        choice = dict(choice or {})
-        msg = {k: v for k, v in (choice.get("message") or {}).items() if k not in _REASONING_FIELDS}
-        choice["message"] = msg
-        choices.append(choice)
+    for n, choice in enumerate(data.get("choices") or []):
+        choice = choice if isinstance(choice, dict) else {}
+        msg = {k: v for k, v in (choice.get("message") or {}).items() if k in _MESSAGE_FIELDS}
+        # Content parts: text, and pictures (which the image policy then
+        # handles). Any other part type is not something the screen can read.
+        if isinstance(msg.get("content"), list):
+            msg["content"] = [p for p in msg["content"] if isinstance(p, dict)
+                              and (p.get("type") in _SCREENED_PART_TYPES)]
+        choices.append({"index": choice.get("index", n), "message": msg,
+                        "finish_reason": choice.get("finish_reason")})
     out["choices"] = choices
     out["kitegate"] = info
     return out

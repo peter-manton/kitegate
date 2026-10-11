@@ -325,6 +325,12 @@ def read_scores(result: dict) -> Dict[str, float]:
     return out
 
 
+def scores_missing(result: dict, thresholds: Optional[Dict[str, float]] = None) -> List[str]:
+    """The thresholded categories a moderation result gave no usable score for."""
+    scores = read_scores(result)
+    return [name for name in (thresholds or IMAGE_THRESHOLDS) if name not in scores]
+
+
 def worst_category(result: dict,
                    thresholds: Optional[Dict[str, float]] = None) -> Optional[Tuple[str, float]]:
     """The category that most exceeds its threshold, or None if the image is fine.
@@ -364,6 +370,12 @@ def results_by_url(urls: List[str], data: dict,
     out: Dict[str, Optional[str]] = {}
     for n, url in enumerate(urls):
         if n >= len(results) or not isinstance(results[n], dict):
+            out[url] = "image.unscreened"
+            continue
+        if scores_missing(results[n], thresholds):
+            # A result that does not score every category we threshold on has
+            # not screened the picture: a scanner that names its categories
+            # differently, or a renamed field, would otherwise read as a pass.
             out[url] = "image.unscreened"
             continue
         worst = worst_category(results[n], thresholds)

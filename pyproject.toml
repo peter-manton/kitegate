@@ -90,9 +90,11 @@ type = "github"
 token = { env = "GH_TOKEN" }
 
 [tool.semantic_release.publish]
-# Attached to the GitHub Release: the package, and the two files people paste
-# into Open WebUI.
-dist_glob_patterns = ["build/pkg/*", "dist/kitegate_openwebui_*.py"]
+# The package, attached to the GitHub Release by `semantic-release publish`.
+# The two Open WebUI files are not listed: `version` already attaches the
+# `assets` above when it creates the release, and uploading them again fails
+# with HTTP 422 because an asset of that name exists.
+dist_glob_patterns = ["build/pkg/*"]
 upload_to_vcs_release = true
 
 [tool.pytest.ini_options]

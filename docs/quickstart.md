@@ -36,7 +36,7 @@ On Windows, double-click `deploy\openwebui\start.cmd`, or run `.\setup.ps1`.
 Setup asks for:
 
 - a provider API key, URL and model (any OpenAI-compatible API; the defaults
-  are OpenAI and `gpt-4.1-mini`). Leave the key blank to run `llama3.2:3b`
+  are OpenAI and `gpt-4.1-mini`). Leave the key blank to run `gemma4:e2b`
   locally with Ollama instead; `./setup.sh --local` or `.\setup.ps1 -Local`
   skips the question. The local model is a download of several GB on the
   first start.
@@ -377,7 +377,7 @@ instead of making it. The gateway spots a reply that is nothing but such a
 call: one to `find_photo` is run, and anything else is asked again without
 tools, so the child never sees the raw call.
 
-The model needs tool calling. OpenAI's models and `llama3.2:3b` have it. If
+The model needs tool calling. OpenAI's models and `gemma4:e2b` have it. If
 the upstream refuses a request carrying the tool, the gateway logs it, asks
 again without it, and stops offering it to that model, so answers carry on in
 words. The gateway needs outbound HTTPS to Wikipedia (and NASA, if listed).

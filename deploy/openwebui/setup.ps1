@@ -39,7 +39,7 @@ if (-not (Test-Path .env)) {
     if ($mode -eq 'local') {
         $providerUrl = 'http://ollama:11434/v1'
         Set-Var KITEGATE_UPSTREAM_URL $providerUrl
-        Set-Var KITEGATE_UPSTREAM_MODEL 'llama3.2:3b'
+        Set-Var KITEGATE_UPSTREAM_MODEL 'gemma4:e2b'
         $script:lines += 'COMPOSE_PROFILES=local'
     } else {
         Set-Var KITEGATE_UPSTREAM_API_KEY $key

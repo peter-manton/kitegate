@@ -32,7 +32,7 @@ if [ ! -f .env ]; then
   if [ "$mode" = local ]; then
     provider_url=http://ollama:11434/v1
     set_var KITEGATE_UPSTREAM_URL "$provider_url"
-    set_var KITEGATE_UPSTREAM_MODEL "llama3.2:3b"
+    set_var KITEGATE_UPSTREAM_MODEL "gemma4:e2b"
     echo "COMPOSE_PROFILES=local" >> .env
   else
     set_var KITEGATE_UPSTREAM_API_KEY "$key"

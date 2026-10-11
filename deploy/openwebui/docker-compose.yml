@@ -110,7 +110,7 @@ services:
     entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull \"$$MODEL\""]
     environment:
       OLLAMA_HOST: ollama:11434
-      MODEL: ${KITEGATE_UPSTREAM_MODEL:-llama3.2:3b}
+      MODEL: ${KITEGATE_UPSTREAM_MODEL:-gemma4:e2b}
     restart: "no"
 
 volumes:

@@ -19,8 +19,8 @@ jobs:
   hooks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - run: pip install "pre-commit==4.6.2"
@@ -34,14 +34,26 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Scan the whole history, not just the tip: a key removed in a later
           # commit is still published.
           fetch-depth: 0
+      # The release tarball, checked against a SHA-256 written down here. The
+      # install script from the project's main branch was piped into sh before,
+      # so whatever that branch held on the day was run. To upgrade, change the
+      # version and the hash together (from trufflehog_<version>_checksums.txt
+      # on the release page).
       - name: TruffleHog
+        env:
+          TRUFFLEHOG_VERSION: "3.99.2"
+          TRUFFLEHOG_SHA256: 3c7b0d1dc4278294269bfdd7594bca8bb28c78da0a4a06ad202ded37b48deca4
         run: |
-          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
-            | sh -s -- -b "$RUNNER_TEMP/bin" v3.99.2
+          archive="trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/${archive}"
+          echo "${TRUFFLEHOG_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/bin" trufflehog
           "$RUNNER_TEMP/bin/trufflehog" --version
           "$RUNNER_TEMP/bin/trufflehog" git file://. --results=verified,unknown --fail --no-update

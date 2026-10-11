@@ -43,7 +43,7 @@ class ImageScanner:
     def __init__(self, settings: GatewaySettings, client: httpx.AsyncClient) -> None:
         self.settings = settings
         self.client = client
-        self.cache = ScanCache()
+        self.cache = ScanCache(ttl=settings.image_cache_ttl)
 
     @property
     def enabled(self) -> bool:

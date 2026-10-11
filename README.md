@@ -55,9 +55,9 @@ admin, and each child gets a sign-in.
   personal details, and leaving a child alone with distress. The checks screen
   the reply anyway; the framing means fewer replies need replacing.
 - **The front end cannot out-rank it.** The gateway's system message is the
-  only one a children's model gets. A front end's own system prompt is folded
-  in after the core and the pack, ranked below them, or dropped
-  (`KITEGATE_CLIENT_SYSTEM=drop`).
+  only one a children's model gets. A front end's own system prompt is screened
+  and folded in after the core and the pack, ranked below them, or dropped
+  (`KITEGATE_CLIENT_SYSTEM=drop`, which the Open WebUI bundle sets).
 - **Pictures are screened, not forbidden.** A child sees a photograph only if
   it came from a curated source (a Wikipedia article's lead image, NASA's
   public library) *and* a moderation model did not object to it. Both checks
@@ -119,7 +119,7 @@ signed. Each `pack.yaml` has a detached Ed25519 signature in `pack.yaml.sig`.
   pack will not load.
 - Your own packs are checked against the public keys you trust. A signature
   that does not match, or comes from a key you have not trusted, is always
-  refused. Unsigned packs load with a warning unless you require signatures.
+  refused. Unsigned packs are refused unless you set `KITEGATE_REQUIRE_SIGNED_PACKS=false`, which loads them with a warning.
 
 ```bash
 kitegate-pack keygen --out ~/.kitegate --name family-packs   # once; keep the .pem private
@@ -128,7 +128,7 @@ kitegate-pack verify my-pack.yaml --key ~/.kitegate/family-packs.pub
 ```
 
 Where packs are loaded, set `KITEGATE_PACK_KEYS` to your public key (comma
-separated for several) and `KITEGATE_REQUIRE_SIGNED_PACKS=true`. Keep the private key off
+separated for several). Signatures are required unless you set `KITEGATE_REQUIRE_SIGNED_PACKS=false`. Keep the private key off
 any machine that serves children: whoever holds it can sign packs you trust.
 
 ## Deploy it: one gateway for every front end
@@ -143,7 +143,9 @@ The gateway (the `kitegate` command, or the Docker image) is an
 OpenAI-compatible endpoint (`/v1/chat/completions`,
 `/v1/models`). For a children's model it refuses known child accounts on any
 other model, screens the child's newest message and the tool results in the
-history, asks upstream for the whole reply, screens it, and only then answers
+history, removes earlier turns that would have been blocked, sends upstream
+only the request fields and message parts it can read (no audio, files or
+hosted tools), asks upstream for the whole reply, screens it, and only then answers
 (replaying it as a stream if asked). Blocks come back as a normal reply in the
 pack's words, with a `kitegate` verdict object alongside for apps that record
 them. Distress goes to an optional block log and alert webhook.

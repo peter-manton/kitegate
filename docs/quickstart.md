@@ -89,6 +89,7 @@ Day to day, from `deploy/openwebui`:
 | To | Run |
 |---|---|
 | add or remove a child | edit `KITEGATE_CHILD_USERS` in `.env`, then `docker compose up -d` |
+| add or remove an adult | edit `KITEGATE_ADULT_USERS` in `.env` (only listed adults can use a model other than the children's), then `docker compose up -d` |
 | change the pack or model | edit `.env`, then `docker compose up -d` |
 | read the block log | `docker compose exec kitegate cat /var/lib/kitegate/blocks.jsonl` |
 | update | `git pull`, then `docker compose up -d --build` |
@@ -113,7 +114,8 @@ normal replies, and distress can alert an adult.
    ```bash
    cp adapters/gateway/gateway.env.example adapters/gateway/gateway.env
    # fill in: KITEGATE_API_KEY, KITEGATE_UPSTREAM_URL/_API_KEY,
-   # KITEGATE_CHILD_MODELS, KITEGATE_CHILD_USERS, KITEGATE_PASSTHROUGH=true
+   # KITEGATE_CHILD_MODELS, KITEGATE_CHILD_USERS, KITEGATE_PASSTHROUGH=true,
+   # KITEGATE_ADULT_USERS (the only accounts served an unscreened model)
    docker compose -f adapters/gateway/docker-compose.yml up -d --build
    ```
 
@@ -122,9 +124,11 @@ normal replies, and distress can alert an adult.
    `adapters/openwebui/gateway-connection.md`.
 
 A system prompt set on the children's model in Open WebUI (or a user's own,
-under Settings) still works, but it is folded into the gateway's system
-message after the core and the pack, under a line ranking it below them. Set
-`KITEGATE_CLIENT_SYSTEM=drop` to ignore it altogether. Section 8 has the
+under Settings) is ignored by this bundle (`KITEGATE_CLIENT_SYSTEM=drop`), because
+a user can write their own and it would sit inside the gateway's trusted
+message. Set `KITEGATE_CLIENT_SYSTEM=fold` to have it folded in after the core
+and the pack, under a line ranking it below them, once it has passed the reply
+screen (a prompt that fails is dropped, with a warning in the log). Section 8 has the
 order.
 
 Earlier releases also shipped a single-file Open WebUI filter for installs
@@ -310,8 +314,10 @@ order:
 
 The client's own instruction messages are then removed from the
 conversation, so nothing after the gateway's message can out-rank it. Folded
-text is not screened (it is not the child's words, and an admin's "never
-discuss self-harm" would otherwise block every question); the reply is.
+text is not screened as the child's words (an admin's "never discuss
+self-harm" would otherwise block every question). It does get the reply screen
+before it is folded in, and a text that fails is dropped with a warning in the
+log rather than blocking the chat. The Open WebUI bundle sets `drop`.
 Adult passthrough models get none of this: no framing, and their system
 prompts are left as they are.
 

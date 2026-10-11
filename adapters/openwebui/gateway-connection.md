@@ -4,8 +4,8 @@ The recommended setup: Open WebUI talks to models only through the gateway, so
 children's chats, titles, tags and follow-ups are all screened, and blocks
 show as normal replies.
 
-1. Run the gateway with `KITEGATE_PASSTHROUGH=true` (adults' models pass
-   through) and put Open WebUI on the `kitegate` Docker network.
+1. Run the gateway with `KITEGATE_PASSTHROUGH=true` and `KITEGATE_ADULT_USERS`
+   (adults' models pass through, for those accounts only) and put Open WebUI on the `kitegate` Docker network.
 2. Open WebUI environment:
 
    ```

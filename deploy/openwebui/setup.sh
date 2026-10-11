@@ -55,6 +55,10 @@ if [ ! -f .env ]; then
   esac
   printf "Values pack (secular-neutral, uk-school, christian-family) [secular-neutral]: "; read -r pack
   [ -n "$pack" ] && set_var KITEGATE_PACK "$pack"
+  # Only these accounts can use an unscreened model, so the admin account you
+  # are about to create must be listed to see any model but the children's.
+  printf "Adult account emails (the admin's first), comma-separated (can be added later in .env): "; read -r adults
+  [ -n "$adults" ] && set_var KITEGATE_ADULT_USERS "$adults"
   printf "Children's account emails, comma-separated (can be added later in .env): "; read -r kids
   [ -n "$kids" ] && set_var KITEGATE_CHILD_USERS "$kids"
   chmod 600 .env
@@ -71,4 +75,5 @@ docker compose up -d --build
 port=$(sed -n 's/^WEBUI_PORT=//p' .env); port=${port:-3000}
 echo
 echo "Open http://127.0.0.1:${port} and create the first account: it becomes the admin."
+echo "Use an email listed in KITEGATE_ADULT_USERS for the admin account, or it can only use the children's model."
 echo "Then add each child in Admin Panel > Users with an email listed in KITEGATE_CHILD_USERS."

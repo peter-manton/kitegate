@@ -383,7 +383,8 @@ def test_a_refused_tool_fallback_keeps_the_clients_tools(fake):
 
 def test_not_offered_on_adult_passthrough(fake):
     fake.replies = [reply("Adult answer.")]
-    with make(fake, passthrough=True, passthrough_url="http://upstream/v1") as c:
+    with make(fake, passthrough=True, passthrough_url="http://upstream/v1",
+              adult_users=frozenset({"parent@example.org"})) as c:
         c.post("/v1/chat/completions",
                headers={"Authorization": f"Bearer {KEY}", "x-kitegate-user-email": "parent@example.org"},
                json={"model": "gpt-adult", "messages": [{"role": "user", "content": "hi"}]})
@@ -416,3 +417,106 @@ def test_the_tool_is_off_without_a_scan_key():
     assert s.image_policy == "block" and not s.photos_enabled
     s = GatewaySettings.from_env({**ENV, "KITEGATE_IMAGE_SCAN_API_KEY": SCAN_KEY})
     assert s.photos_enabled
+
+
+# -- a provider hiccup is not "no photograph", and the queue is bounded --------------
+def _tool(handler):
+    import asyncio
+    from kitegate.gateway.phototool import PhotoTool
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = PhotoTool(["wikimedia"], client)
+    tool.min_gap = 0
+    tool.retry_sleep = 0
+    return asyncio, tool, client
+
+
+@pytest.mark.parametrize("failure", [
+    httpx.Response(503),
+    httpx.Response(200, text="<html>not json</html>"),
+])
+def test_a_provider_failure_is_not_cached_as_not_found(failure):
+    seen = {"n": 0, "fail": True}
+
+    def handler(request):
+        seen["n"] += 1
+        return failure if seen["fail"] else httpx.Response(200, json=wiki_page())
+
+    asyncio, tool, client = _tool(handler)
+
+    async def run():
+        first = await tool.find("tiger")
+        seen["fail"] = False       # the provider recovers
+        second = await tool.find("tiger")
+        await client.aclose()
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == BUSY_REPLY            # told it is busy, not that nothing exists
+    assert "![" in second                 # and asked again, not served a remembered "no"
+
+
+def test_an_unreachable_provider_is_not_cached_as_not_found():
+    seen = {"fail": True}
+
+    def handler(request):
+        if seen["fail"]:
+            raise httpx.ConnectError("down")
+        return httpx.Response(200, json=wiki_page())
+
+    asyncio, tool, client = _tool(handler)
+
+    async def run():
+        first = await tool.find("tiger")
+        seen["fail"] = False
+        second = await tool.find("tiger")
+        await client.aclose()
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == BUSY_REPLY and "![" in second
+
+
+def test_lookups_past_the_queue_limit_are_told_the_library_is_busy():
+    import kitegate.gateway.phototool as phototool
+
+    asyncio, tool, client = _tool(lambda request: httpx.Response(200, json=wiki_page()))
+
+    async def run():
+        tool._queued = phototool.MAX_QUEUED   # the queue is already full
+        busy = await tool.find("tiger")
+        tool._queued = 0
+        free = await tool.find("tiger")
+        await client.aclose()
+        return busy, free
+
+    busy, free = asyncio.run(run())
+    assert busy == BUSY_REPLY and "![" in free
+
+
+# -- one bad request must not switch the tool off for everyone ------------------------
+def test_a_request_the_model_rejects_for_another_reason_does_not_disable_the_tool(fake):
+    # Both the first try and the retry without the tool fail: the request was
+    # at fault (an out-of-range parameter), not the tool.
+    fake.replies = [httpx.Response(400, json={"error": "temperature out of range"}),
+                    httpx.Response(400, json={"error": "temperature out of range"}),
+                    reply("Tigers are big cats.")]
+    with make(fake) as c:
+        ask(c, temperature=99)
+        ask(c)                      # a normal request afterwards
+    assert fake.chat_calls[-1].get("tools"), "the tool is still offered to the next request"
+
+
+def test_a_model_that_refused_the_tool_is_tried_again_after_the_expiry(fake, monkeypatch):
+    import kitegate.gateway.app as gateway_app
+
+    now = [1000.0]
+    monkeypatch.setattr(gateway_app.time, "monotonic", lambda: now[0])
+    fake.replies = [httpx.Response(400, json={"error": "does not support tools"}),
+                    reply("Tigers are big cats."), reply("Lions."), reply("Bears.")]
+    with make(fake) as c:
+        ask(c)                                             # refused, then answered without the tool
+        ask(c)
+        assert "tools" not in fake.chat_calls[-1]          # remembered
+        now[0] += gateway_app.NO_TOOLS_TTL + 1
+        ask(c)
+    assert fake.chat_calls[-1].get("tools"), "offered again once the memory expired"

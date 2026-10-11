@@ -17,6 +17,17 @@ updates:
       python-minor-and-patch:
         update-types: [minor, patch]
 
+  # The hash-locked requirements the gateway image installs (adapters/gateway/Dockerfile).
+  - package-ecosystem: pip
+    directory: "/requirements"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker]
+    groups:
+      gateway-lock:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

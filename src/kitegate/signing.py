@@ -11,8 +11,10 @@ Checking, at load time:
   - any other pack is checked against the keys you trust (KITEGATE_PACK_KEYS);
   - a signature that does not match, or comes from an untrusted key, is
     always refused;
-  - an unsigned pack is refused if KITEGATE_REQUIRE_SIGNED_PACKS is true,
-    otherwise loaded with a warning.
+  - an unsigned pack is refused unless KITEGATE_REQUIRE_SIGNED_PACKS is set to
+    false (or 0, no, off), in which case it is loaded with a warning. Unset
+    means required, and so does anything that is not an explicit "false": a
+    typo must not quietly turn the check off.
 
 Make and use keys with the `kitegate-pack` command (packtool.py).
 """
@@ -33,7 +35,7 @@ SIGNATURE_FORMAT = "kitegate-pack-signature/1"
 # the maintainer and is never in this repository.
 PROJECT_PUBLIC_KEY = "lVzvx3JxwksNvpvAbu4OooThbpgiCQgwr/e10JBTpe0="
 
-_TRUE = ("1", "true", "yes", "on")
+_FALSE = ("0", "false", "no", "off")
 
 
 class SignatureError(ValueError):
@@ -146,7 +148,9 @@ class PackTrust:
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "PackTrust":
         e = os.environ if env is None else env
         keys = (e.get("KITEGATE_PACK_KEYS") or "").split(",")
-        require = (e.get("KITEGATE_REQUIRE_SIGNED_PACKS") or "").strip().lower() in _TRUE
+        # Required unless explicitly switched off: a deployment that says nothing
+        # gets the safe behaviour, and a misspelt "false" does too.
+        require = (e.get("KITEGATE_REQUIRE_SIGNED_PACKS") or "").strip().lower() not in _FALSE
         return cls.from_keys(keys, require)
 
     @classmethod
@@ -158,8 +162,8 @@ class PackTrust:
         if signature is None:
             if self.require:
                 raise SignatureError(f"{source}: the pack is not signed, and signed packs are required")
-            logger.warning("kitegate: %s is not signed; set KITEGATE_REQUIRE_SIGNED_PACKS=true "
-                           "to refuse unsigned packs", source)
+            logger.warning("kitegate: %s is not signed, and KITEGATE_REQUIRE_SIGNED_PACKS=false "
+                           "lets it load. Sign it with kitegate-pack and remove that setting", source)
             return
         public = self.keys.get(signature.key_id)
         if public is None:

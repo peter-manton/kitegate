@@ -54,7 +54,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+import time
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 # Only the categories the moderation model actually applies to IMAGE input.
@@ -80,38 +81,178 @@ IMAGE_THRESHOLDS: Dict[str, float] = {
     "self-harm/instructions": 0.25,
 }
 
-# Markdown images: ![alt](url), ![alt](<url>), ![alt](url "title").
-# Anchored on the leading "!" so ordinary links are not treated as pictures.
-_MD_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s<>]+)>?[^)]*\)")
-# HTML, in case a front end renders it.
-_HTML_IMG = re.compile(r"<img\b[^>]*?\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+# Finding pictures. Not regexes over the whole reply: a renderer accepts more
+# than any one pattern does (brackets inside the alt text, parentheses inside
+# the URL, reference-style images, HTML without quotes), and every form a
+# pattern missed was a picture shown to a child unscanned, even with the
+# policy set to "block". So the markdown forms are read the way CommonMark
+# reads them, and every HTML tag that can load a resource is taken apart.
+#
+# The result is a list of spans (start, end, urls), so stripping removes
+# exactly what detection found and the two cannot disagree.
+
 # A bare URL that ends in an image extension. Some front ends embed these
 # rather than linking them, so they count as a picture being shown.
 _BARE_IMAGE = re.compile(
     r"https?://[^\s<>\"')\]]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif|tiff?)(?:\?[^\s<>\"')\]]*)?",
     re.IGNORECASE)
+# Reference definitions: [label]: url "title". Up to three spaces of indent.
+_REF_DEF = re.compile(r"^ {0,3}\[((?:[^\[\]\\]|\\.){1,999})\]:[ \t]*(?:\r?\n[ \t]*)?"
+                      r"(?:<([^<>\n]*)>|(\S+))[^\n]*$", re.MULTILINE)
+# HTML tags that can load a picture (or any resource a renderer would fetch).
+_HTML_TAG = re.compile(r"<\s*(?:img|image|source|picture|video|audio|input|embed|object|iframe|"
+                       r"svg|use|feimage|body|table|td|th|div|span|a)\b[^>]*>", re.IGNORECASE)
+_HTML_ATTR = re.compile(r"\b(src|srcset|poster|data|href|xlink:href|background|style)\s*=\s*"
+                        r"(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+))", re.IGNORECASE)
+_CSS_URL = re.compile(r"url\(\s*[\"']?([^\"')]+)[\"']?\s*\)", re.IGNORECASE)
+# Attributes that load something whatever the tag. href only counts on the
+# SVG elements that use it to load an image.
+_LOADING_ATTRS = {"src", "srcset", "poster", "data", "background", "style"}
+_HREF_TAGS = re.compile(r"<\s*(?:image|use|feimage)\b", re.IGNORECASE)
+# Bounds, so a reply of "![![![..." costs linear time rather than quadratic.
+_MAX_SCAN = 2000
 
 _DATA_IMAGE = re.compile(r"^data:image/[a-z0-9.+-]+;base64,", re.IGNORECASE)
+
+Span = Tuple[int, int, List[str]]
+
+
+def _close_bracket(text: str, start: int) -> int:
+    """Index of the "]" matching the "[" at `start`, or -1."""
+    depth = 0
+    i = start
+    stop = min(len(text), start + _MAX_SCAN)
+    while i < stop:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _destination(text: str, start: int) -> Tuple[int, str]:
+    """(end, url) of an inline destination "(url "title")" at `start`, or (-1, "")."""
+    i = start + 1
+    stop = min(len(text), start + _MAX_SCAN)
+    while i < stop and text[i] in " \t\r\n":
+        i += 1
+    if i < stop and text[i] == "<":
+        close = text.find(">", i, stop)
+        if close == -1:
+            return -1, ""
+        url, i = text[i + 1:close], close + 1
+    else:
+        depth, begin = 0, i
+        while i < stop:
+            ch = text[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if ch in " \t\r\n":
+                break
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            i += 1
+        url = text[begin:min(i, stop)]
+    close = text.find(")", i, stop)
+    if close == -1:
+        return -1, ""
+    return close + 1, url.strip().replace("\\", "")
+
+
+def _label(text: str) -> str:
+    return " ".join(text.replace("\\", "").split()).casefold()
+
+
+def _markdown_spans(text: str) -> List[Span]:
+    spans: List[Span] = []
+    refs: List[Tuple[int, int, str]] = []
+    i = text.find("![")
+    while i != -1:
+        close = _close_bracket(text, i + 1)
+        if close != -1:
+            after = close + 1
+            if text[after:after + 1] == "(":
+                end, url = _destination(text, after)
+                if end != -1:
+                    spans.append((i, end, [url]))
+            elif text[after:after + 1] == "[":
+                end = _close_bracket(text, after)
+                if end != -1:
+                    label = text[after + 1:end] or text[i + 2:close]
+                    refs.append((i, end + 1, _label(label)))
+            else:
+                refs.append((i, after, _label(text[i + 2:close])))
+        # From i + 2, not from the end: the alt text can hold another image.
+        i = text.find("![", i + 2)
+    if refs:
+        defs: Dict[str, Tuple[int, int, str]] = {}
+        for m in _REF_DEF.finditer(text):
+            defs.setdefault(_label(m.group(1)), (m.start(), m.end(), (m.group(2) or m.group(3) or "").strip()))
+        for start, end, label in refs:
+            if label in defs:
+                d_start, d_end, url = defs[label]
+                spans.append((start, end, [url]))
+                spans.append((d_start, d_end, [url]))
+    return spans
+
+
+def _html_spans(text: str) -> List[Span]:
+    spans: List[Span] = []
+    for tag in _HTML_TAG.finditer(text):
+        urls: List[str] = []
+        for attr in _HTML_ATTR.finditer(tag.group(0)):
+            name = attr.group(1).lower()
+            value = next(v for v in attr.group(2, 3, 4) if v is not None).strip()
+            if name == "style":
+                urls.extend(u.strip() for u in _CSS_URL.findall(value))
+            elif name == "srcset":
+                urls.extend(c.strip().split()[0] for c in value.split(",") if c.strip())
+            elif name in _LOADING_ATTRS or _HREF_TAGS.match(tag.group(0)):
+                urls.append(value)
+        if urls:
+            spans.append((tag.start(), tag.end(), urls))
+    return spans
+
+
+def image_spans(text: str) -> List[Span]:
+    """Every picture in a piece of text, as (start, end, urls), in order."""
+    if not text:
+        return []
+    spans = _markdown_spans(text) + _html_spans(text)
+    covered = [(s, e) for s, e, _ in spans]
+    for m in _BARE_IMAGE.finditer(text):
+        if not any(s <= m.start() < e for s, e in covered):
+            spans.append((m.start(), m.end(), [m.group(0)]))
+    return sorted(spans, key=lambda s: (s[0], s[1]))
 
 
 def image_urls(text: str) -> List[str]:
     """Every picture a piece of model or tool output would display.
 
     Order is preserved and duplicates are dropped, so a reply repeating one
-    lead image costs one scan.
+    lead image costs one scan. An empty or relative URL is kept as given:
+    safe_image_url refuses it, so the picture is removed rather than shown.
     """
-    if not text:
-        return []
-    found: List[str] = []
-    for pattern in (_MD_IMAGE, _HTML_IMG):
-        found.extend(m.group(1).strip() for m in pattern.finditer(text))
-    found.extend(m.group(0).strip() for m in _BARE_IMAGE.finditer(text))
     seen = set()
     out = []
-    for url in found:
-        if url and url not in seen:
-            seen.add(url)
-            out.append(url)
+    for _, _, urls in image_spans(text):
+        for url in urls:
+            url = url.strip()
+            if url not in seen:
+                seen.add(url)
+                out.append(url)
     return out
 
 
@@ -185,6 +326,12 @@ def read_scores(result: dict) -> Dict[str, float]:
     return out
 
 
+def scores_missing(result: dict, thresholds: Optional[Dict[str, float]] = None) -> List[str]:
+    """The thresholded categories a moderation result gave no usable score for."""
+    scores = read_scores(result)
+    return [name for name in (thresholds or IMAGE_THRESHOLDS) if name not in scores]
+
+
 def worst_category(result: dict,
                    thresholds: Optional[Dict[str, float]] = None) -> Optional[Tuple[str, float]]:
     """The category that most exceeds its threshold, or None if the image is fine.
@@ -226,6 +373,12 @@ def results_by_url(urls: List[str], data: dict,
         if n >= len(results) or not isinstance(results[n], dict):
             out[url] = "image.unscreened"
             continue
+        if scores_missing(results[n], thresholds):
+            # A result that does not score every category we threshold on has
+            # not screened the picture: a scanner that names its categories
+            # differently, or a renamed field, would otherwise read as a pass.
+            out[url] = "image.unscreened"
+            continue
         worst = worst_category(results[n], thresholds)
         out[url] = rule_label(worst[0]) if worst else None
     return out
@@ -240,51 +393,75 @@ def strip_images(text: str, urls: Iterable[str]) -> str:
     teach a child that asking was wrong, when the honest outcome is simply
     that there is no good picture. The words were screened by the text tiers
     on their own merits and are unaffected.
+
+    Uses the same spans as image_urls, so whatever was found is what goes.
     """
     if not text:
         return text
-    targets = {u for u in urls if u}
+    targets = {u.strip() for u in urls if u is not None}
     if not targets:
         return text
-
-    def drop(match: "re.Match[str]") -> str:
-        url = (match.group(1) if match.lastindex else match.group(0)).strip()
-        return "" if url in targets else match.group(0)
-
-    out = _MD_IMAGE.sub(drop, text)
-    out = _HTML_IMG.sub(drop, out)
-    out = _BARE_IMAGE.sub(lambda m: "" if m.group(0).strip() in targets else m.group(0), out)
+    cut = sorted((s, e) for s, e, found in image_spans(text)
+                 if any(u.strip() in targets for u in found))
+    if not cut:
+        return text
+    merged: List[List[int]] = []
+    for s, e in cut:
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    out = text
+    for s, e in reversed(merged):
+        out = out[:s] + out[e:]
     # Tidy the hole left behind: trailing spaces, then runs of blank lines.
     out = re.sub(r"[ \t]+(\r?\n)", r"\1", out)
     out = re.sub(r"(\r?\n){3,}", r"\1\1", out)
     return out.strip()
 
 
+#: How long a verdict is trusted, in seconds. The address of a picture is not
+#: the picture: a Wikimedia file can be replaced (or vandalised) under the same
+#: URL, and the moderation service fetched it once. An answer that never
+#: expires would keep showing a replaced picture on the strength of a check
+#: made on the old one, so every verdict is re-asked after this long.
+DEFAULT_CACHE_TTL = 6 * 60 * 60.0
+
+
 class ScanCache:
-    """Remembered verdicts, keyed by URL.
+    """Remembered verdicts, keyed by URL, for a limited time.
 
     The reason the hosted option is cheap in practice. A children's
-    encyclopedia has a very heavy head — tigers, volcanoes, the Romans — and a
-    public lead image has the same verdict for every child, forever. After a
-    short warm-up almost every request is a cache hit and makes no API call at
-    all.
+    encyclopedia has a very heavy head (tigers, volcanoes, the Romans) and a
+    public lead image has the same verdict for every child for as long as the
+    picture is the same one. After a short warm-up almost every request is a
+    cache hit and makes no API call at all.
 
     Bounded and in-memory: a safety component should not be able to grow until
-    the process dies. Oldest entries go first, which suits this access pattern because the
-    popular subjects keep being re-inserted.
+    the process dies. Oldest entries go first, which suits this access pattern
+    because the popular subjects keep being re-inserted. An entry also expires
+    after `ttl` seconds (DEFAULT_CACHE_TTL), so a replaced picture is checked
+    again; the popular subjects cost one call per expiry, not one per child.
     """
 
-    def __init__(self, limit: int = 4096) -> None:
+    def __init__(self, limit: int = 4096, ttl: float = DEFAULT_CACHE_TTL,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.limit = max(1, int(limit))
-        self._entries: "Dict[str, Optional[str]]" = {}
+        self.ttl = max(0.0, float(ttl))
+        self._clock = clock
+        self._entries: "Dict[str, Tuple[Optional[str], float]]" = {}
         self.hits = 0
         self.misses = 0
 
     def get(self, url: str) -> Tuple[bool, Optional[str]]:
         """(known, rule). rule is None for a picture that passed."""
-        if url in self._entries:
-            self.hits += 1
-            return True, self._entries[url]
+        entry = self._entries.get(url)
+        if entry is not None:
+            rule, expires = entry
+            if self._clock() < expires:
+                self.hits += 1
+                return True, rule
+            del self._entries[url]  # stale: ask again
         self.misses += 1
         return False, None
 
@@ -293,7 +470,7 @@ class ScanCache:
             del self._entries[url]
         elif len(self._entries) >= self.limit:
             self._entries.pop(next(iter(self._entries)))
-        self._entries[url] = rule
+        self._entries[url] = (rule, self._clock() + self.ttl)
 
     def __len__(self) -> int:
         return len(self._entries)

@@ -7,10 +7,15 @@
     KITEGATE_NEMO_CONFIG_ID           NeMo config to use; empty uses the server's default
     KITEGATE_CHILD_MODELS             comma-separated children's models: "alias" or "alias=upstream-model"
     KITEGATE_CHILD_USERS              comma-separated child account emails, for deny-by-default
+    KITEGATE_ADULT_USERS              comma-separated adult account emails: the only accounts
+                                      passthrough serves. Anyone else on another model is
+                                      refused, so an account nobody listed is treated as a child.
     KITEGATE_PACK                     default values pack (default: secular-neutral)
     KITEGATE_ALLOWED_PACKS            packs a client may pick per request with x-kitegate-pack
     KITEGATE_PACK_KEYS                extra public keys trusted to sign packs (see signing.py)
-    KITEGATE_REQUIRE_SIGNED_PACKS     "true": refuse any pack without a trusted signature
+    KITEGATE_REQUIRE_SIGNED_PACKS     required by default: a pack without a trusted signature is
+                                      refused. Only an explicit "false" (or 0, no, off) lets an
+                                      unsigned pack load, with a warning.
     KITEGATE_INJECT_FRAMING           "true" (default): add the pack's framing to the system message.
                                       The core framing (core.py CORE_FRAMING) is sent either way
                                       and cannot be switched off here.
@@ -27,6 +32,10 @@
     KITEGATE_BLOCK_LOG                optional JSONL path; blocks are appended for adult review
     KITEGATE_ALERT_WEBHOOK            optional URL; distress events are POSTed to it
     KITEGATE_UPSTREAM_TIMEOUT         seconds (default 120)
+    KITEGATE_MAX_BODY_BYTES           largest request body accepted (default 4194304, 4 MiB);
+                                      a bigger one gets HTTP 413
+    KITEGATE_MAX_CONCURRENCY          chat requests in progress at once (default 64); past it
+                                      a request gets HTTP 429 with Retry-After
     KITEGATE_ALLOW_INSECURE_UPSTREAM  "true": allow plain http:// to non-local hosts (not advised)
 
 Pictures (see images.py for what is and is not covered):
@@ -44,6 +53,9 @@ Pictures (see images.py for what is and is not covered):
                                       there is no safe way to show an unscanned picture.
     KITEGATE_IMAGE_SCAN_MODEL         default omni-moderation-latest
     KITEGATE_IMAGE_SCAN_TIMEOUT       seconds (default 10)
+    KITEGATE_IMAGE_CACHE_TTL          seconds a picture's verdict is trusted (default 21600,
+                                      six hours). A picture can be replaced under the same
+                                      URL, so a verdict is asked for again after this long.
     KITEGATE_IMAGE_HOSTS              hosts a picture may come from. Defaults to the hosts
                                       of the curated photo providers this project ships
                                       (TRUSTED_IMAGE_HOSTS below), so a picture the model
@@ -87,7 +99,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
-from ..images import IMAGE_THRESHOLDS
+from ..images import DEFAULT_CACHE_TTL, IMAGE_THRESHOLDS
 from ..messages import split_list
 from ..packs import bundled_packs
 from ..photos import DEFAULT_PROVIDERS, PROVIDERS, get_providers, image_hosts_for
@@ -178,6 +190,16 @@ def _parse_thresholds(value: str) -> Dict[str, float]:
     return out
 
 
+def _int(env: Mapping[str, str], name: str, default: int) -> int:
+    value = (env.get(name) or "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        raise SettingsError(f"{name} must be a whole number, got {value!r}") from None
+
+
 def _parse_models(value: str) -> Dict[str, str]:
     models: Dict[str, str] = {}
     for item in (value or "").split(","):
@@ -199,6 +221,7 @@ class GatewaySettings:
     upstream_kind: str = "openai"
     nemo_config_id: str = ""
     child_users: FrozenSet[str] = frozenset()
+    adult_users: FrozenSet[str] = frozenset()
     pack: str = "secular-neutral"
     allowed_packs: FrozenSet[str] = frozenset()
     inject_framing: bool = True
@@ -210,6 +233,8 @@ class GatewaySettings:
     alert_webhook: str = ""
     timeout: float = 120.0
     allow_insecure_upstream: bool = False
+    max_body_bytes: int = 4 * 1024 * 1024
+    max_concurrency: int = 64
     # Pictures: the conservative values, not the documented defaults. See the
     # note at the end of the module docstring; from_env resolves what an unset
     # environment variable means.
@@ -218,6 +243,7 @@ class GatewaySettings:
     image_scan_api_key: str = ""
     image_scan_model: str = DEFAULT_SCAN_MODEL
     image_scan_timeout: float = 10.0
+    image_cache_ttl: float = DEFAULT_CACHE_TTL
     image_hosts: FrozenSet[str] = frozenset()
     image_thresholds: Optional[Dict[str, float]] = None
     allow_uploads: bool = False
@@ -237,6 +263,14 @@ class GatewaySettings:
         if self.client_system not in CLIENT_SYSTEM_POLICIES:
             raise SettingsError(
                 f"KITEGATE_CLIENT_SYSTEM must be one of {list(CLIENT_SYSTEM_POLICIES)}")
+        if self.max_body_bytes < 1024:
+            raise SettingsError("KITEGATE_MAX_BODY_BYTES must be at least 1024")
+        if self.max_concurrency < 1:
+            raise SettingsError("KITEGATE_MAX_CONCURRENCY must be at least 1")
+        both = {str(u).strip().lower() for u in self.child_users} & \
+            {str(u).strip().lower() for u in self.adult_users}
+        if both:
+            raise SettingsError(f"listed as both a child and an adult: {sorted(both)}")
         check_transport("KITEGATE_UPSTREAM_URL", self.upstream_url, self.allow_insecure_upstream)
         if self.passthrough:
             check_transport("KITEGATE_PASSTHROUGH_URL", self.passthrough_url or self.upstream_url,
@@ -313,6 +347,7 @@ class GatewaySettings:
             nemo_config_id=(e.get("KITEGATE_NEMO_CONFIG_ID") or "").strip(),
             child_models=_parse_models(e.get("KITEGATE_CHILD_MODELS") or ""),
             child_users=split_list(e.get("KITEGATE_CHILD_USERS")),
+            adult_users=split_list(e.get("KITEGATE_ADULT_USERS")),
             pack=(e.get("KITEGATE_PACK") or "secular-neutral").strip(),
             allowed_packs=frozenset(bundled_packs()) if allowed == "*" else split_list(allowed),
             inject_framing=(e.get("KITEGATE_INJECT_FRAMING") or "true").strip().lower() in _TRUE,
@@ -324,11 +359,14 @@ class GatewaySettings:
             alert_webhook=e.get("KITEGATE_ALERT_WEBHOOK") or "",
             timeout=float(e.get("KITEGATE_UPSTREAM_TIMEOUT") or 120),
             allow_insecure_upstream=(e.get("KITEGATE_ALLOW_INSECURE_UPSTREAM") or "").strip().lower() in _TRUE,
+            max_body_bytes=_int(e, "KITEGATE_MAX_BODY_BYTES", 4 * 1024 * 1024),
+            max_concurrency=_int(e, "KITEGATE_MAX_CONCURRENCY", 64),
             image_policy=policy,
             image_scan_url=(e.get("KITEGATE_IMAGE_SCAN_URL") or DEFAULT_SCAN_URL).strip().rstrip("/"),
             image_scan_api_key=scan_key,
             image_scan_model=(e.get("KITEGATE_IMAGE_SCAN_MODEL") or DEFAULT_SCAN_MODEL).strip(),
             image_scan_timeout=float(e.get("KITEGATE_IMAGE_SCAN_TIMEOUT") or 10),
+            image_cache_ttl=float(e.get("KITEGATE_IMAGE_CACHE_TTL") or DEFAULT_CACHE_TTL),
             image_hosts=image_hosts,
             image_thresholds=_parse_thresholds(e.get("KITEGATE_IMAGE_THRESHOLDS") or ""),
             allow_uploads=(e.get("KITEGATE_IMAGE_UPLOADS") or "").strip().lower() in ("allow", *_TRUE),

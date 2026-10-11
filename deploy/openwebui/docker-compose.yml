@@ -22,13 +22,17 @@ services:
       KITEGATE_UPSTREAM_KIND: openai
       KITEGATE_CHILD_MODELS: kids-encyclopedia=${KITEGATE_UPSTREAM_MODEL:?run setup first}
       KITEGATE_CHILD_USERS: ${KITEGATE_CHILD_USERS:-}
+      # Only these accounts get an adult model. Anyone else is refused on it.
+      KITEGATE_ADULT_USERS: ${KITEGATE_ADULT_USERS:-}
       KITEGATE_PACK: ${KITEGATE_PACK:-secular-neutral}
       KITEGATE_PACK_KEYS: ${KITEGATE_PACK_KEYS:-}
       KITEGATE_REQUIRE_SIGNED_PACKS: "true"
-      # A system prompt set in Open WebUI: blank folds it in below the core
-      # and pack framing, "drop" ignores it.
-      KITEGATE_CLIENT_SYSTEM: ${KITEGATE_CLIENT_SYSTEM:-}
-      # Adults' models pass through unscreened; children are refused on them.
+      # A system prompt set in Open WebUI (an admin's, or a user's own). Blank
+      # means "drop": it is ignored, because a user can write their own and it
+      # would sit inside the gateway's trusted message. "fold" puts it in below
+      # the core and pack framing, after the reply screen has checked it.
+      KITEGATE_CLIENT_SYSTEM: ${KITEGATE_CLIENT_SYSTEM:-drop}
+      # Adults' models pass through unscreened, for KITEGATE_ADULT_USERS only.
       KITEGATE_PASSTHROUGH: "true"
       KITEGATE_BLOCK_LOG: /var/lib/kitegate/blocks.jsonl
       KITEGATE_ALERT_WEBHOOK: ${KITEGATE_ALERT_WEBHOOK:-}
@@ -51,7 +55,7 @@ services:
       - blocklog:/var/lib/kitegate
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.12.0
+    image: ghcr.io/open-webui/open-webui:v0.12.0@sha256:1565038903151ced924b5a3226f73f40f16963df4b910441f6391f10144afdaa
     restart: unless-stopped
     depends_on:
       kitegate:
@@ -97,7 +101,7 @@ services:
   # COMPOSE_PROFILES=local: a model on this machine instead of a provider.
   ollama:
     profiles: [local]
-    image: ollama/ollama:0.40.2
+    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
     restart: unless-stopped
     volumes:
       - ollama:/root/.ollama
@@ -105,7 +109,7 @@ services:
   # Downloads the model once (several GB), then exits.
   ollama-pull:
     profiles: [local]
-    image: ollama/ollama:0.40.2
+    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
     depends_on: [ollama]
     entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull \"$$MODEL\""]
     environment:

@@ -23,6 +23,7 @@ import asyncio
 import hmac
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
@@ -33,8 +34,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .. import PolicyEngine, load_pack
 from ..blocklog import BlockLog
 from ..engine import PASS, Verdict
-from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, WRONG_MODEL_REPLY, Scope, email_from_headers,
-                        tool_call_arguments, tool_texts)
+from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, UNREADABLE_REPLY, WRONG_MODEL_REPLY, Scope,
+                        content_text, email_from_headers, split_list, tool_call_arguments,
+                        tool_texts, unreadable_parts)
 from ..photos import image_hosts_for
 from . import payloads
 from .config import GatewaySettings
@@ -49,6 +51,8 @@ UNSUITABLE_PHOTO_REPLY = "No suitable photograph was found. Answer in words inst
 logger = logging.getLogger("kitegate.gateway")
 
 PACK_HEADER = "x-kitegate-pack"
+#: Seconds a model is left without the photo tool after it refused it.
+NO_TOOLS_TTL = 3600.0
 
 
 def _error(status: int, message: str, code: str) -> JSONResponse:
@@ -58,6 +62,10 @@ def _error(status: int, message: str, code: str) -> JSONResponse:
 
 def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTransport] = None) -> FastAPI:
     scope = Scope(settings.child_models.keys(), settings.child_users)
+    adults = split_list(settings.adult_users)
+    if settings.passthrough and not adults:
+        logger.warning("kitegate: KITEGATE_PASSTHROUGH is on but KITEGATE_ADULT_USERS is empty, "
+                       "so every other model is refused. List the adults' emails to let them through")
     block_log = BlockLog(settings.block_log)
     engines: Dict[str, PolicyEngine] = {}
     for name in settings.packs:  # load every pack now: a bad pack fails at start, not mid-chat
@@ -76,8 +84,11 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
     if settings.image_policy == "allow":
         logger.warning("kitegate: KITEGATE_IMAGE_POLICY=allow, so pictures reach children UNCHECKED")
     if settings.image_policy == "scan" and not settings.image_hosts:
-        logger.warning("kitegate: KITEGATE_IMAGE_HOSTS=* so pictures from any host are scanned; "
-                       "a passing picture from an uncurated source is still shown")
+        logger.error("kitegate: KITEGATE_IMAGE_HOSTS=* so pictures from ANY host are shown if they "
+                     "pass a scan. The scanner fetches a picture once and the child's browser "
+                     "fetches it again later, and a host you do not control can serve each a "
+                     "different one. Set KITEGATE_IMAGE_HOSTS to the hosts you trust unless that "
+                     "is a risk you have chosen")
     if settings.image_policy == "block" and not settings.image_scan_api_key:
         # Not a warning: removing pictures is the safe outcome. But it is the
         # one that looks like a bug to an adult expecting photographs, so the
@@ -91,10 +102,22 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
     # The photo tool. Run here rather than in a front end, so no front end
     # needs anything installed and every one gets the same, screened tool.
     photo_tool = PhotoTool(settings.photo_providers, client) if settings.photos_enabled else None
-    # Upstream models that refused a request carrying the tool (no tool
-    # calling). They are asked without it from then on, so a model that
-    # cannot use tools still answers every question in words.
-    no_tools: set = set()
+    # Upstream models that refused a request carrying the tool and then
+    # answered the same request without it (no tool calling), mapped to when
+    # to try again. They are asked without it meanwhile, so a model that
+    # cannot use tools still answers every question in words, and a model that
+    # is swapped for one that can is noticed.
+    no_tools: Dict[str, float] = {}
+
+    def tools_refused(model: str) -> bool:
+        until = no_tools.get(model)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            del no_tools[model]
+            return False
+        return True
+
     if photo_tool is not None:
         logger.info("kitegate: photo tool on for children's models, providers=%s",
                     ",".join(settings.photo_providers))
@@ -279,11 +302,28 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             data = {**data, "usage": usage}
         return data, None, None
 
-    @app.post("/v1/chat/completions")
-    async def chat(request: Request) -> Response:
-        if not authorised(request):
-            return _error(401, "Invalid or missing API key.", "unauthorised")
-        raw = await request.body()
+    async def read_body(request: Request) -> Optional[bytes]:
+        """The request body, or None if it is larger than the limit.
+
+        Counted as it arrives as well as from Content-Length, so a chunked
+        upload with no length cannot make the gateway hold more than the limit.
+        """
+        limit = settings.max_body_bytes
+        declared = request.headers.get("content-length") or ""
+        if declared.isdigit() and int(declared) > limit:
+            return None
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                return None
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    async def handle_chat(request: Request) -> Response:
+        raw = await read_body(request)
+        if raw is None:
+            return _error(413, "The request is too large.", "request_too_large")
         try:
             body = json.loads(raw)
         except ValueError:
@@ -291,9 +331,13 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
         if not isinstance(body, dict) or not body.get("model"):
             return _error(400, "A model is required.", "model_required")
 
-        model = str(body["model"])
+        # Stripped, because Scope matches a model name with its spaces removed:
+        # without this a padded alias is a children's model that then fails
+        # the settings lookup below.
+        model = str(body["model"]).strip()
         stream = bool(body.get("stream"))
-        include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        options = body.get("stream_options")
+        include_usage = isinstance(options, dict) and bool(options.get("include_usage"))
         email = email_from_headers(request.headers)
         if settings.passthrough and not email:
             # With adult traffic flowing through, a missing identity is a
@@ -307,7 +351,18 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
         if not scope.is_child_model(model):
             if not settings.passthrough:
                 return _error(404, f"The model '{model}' is not available here.", "model_not_found")
+            if email not in adults:
+                # Allow-listed, not deny-listed: an account nobody listed (a
+                # child added later, a second sign-up) gets the children's
+                # rules, not an unscreened model.
+                verdict = Verdict(False, "policy", "policy.not_adult", WRONG_MODEL_REPLY)
+                return blocked(verdict, "policy", model, stream, include_usage, email, "")
             return await passthrough(raw, stream)
+
+        # A field of the wrong type is the client's mistake, not a crash.
+        for field, kind in (("messages", list), ("tools", list), ("stream_options", dict)):
+            if body.get(field) is not None and not isinstance(body[field], kind):
+                return _error(400, f"'{field}' must be a {kind.__name__}.", "invalid_request")
 
         alias = model
         pack = (request.headers.get(PACK_HEADER) or settings.pack).strip().lower()
@@ -317,6 +372,8 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
         messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
         asked = payloads.newest_user_text(messages)
         uploaded = payloads.newest_user_images(messages)
+        newest = next((m for m in reversed(messages) if m.get("role") == "user"), {})
+        unreadable = unreadable_parts(newest.get("content"))
 
         try:
             # Pictures the CHILD sent. Refused by default, and refused before
@@ -328,19 +385,42 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             # nothing screened at all. A question photographed or screenshotted
             # into an image therefore bypassed every text tier, which is the
             # ordinary way a filter like this gets walked around.
+            # Audio, files and other parts the screen cannot read are refused
+            # for the same reason: they would reach the model unscreened.
+            if unreadable:
+                verdict = Verdict(False, "policy", "content.unreadable", UNREADABLE_REPLY)
+                return blocked(verdict, "request", alias, stream, include_usage, email, asked)
             if uploaded and not settings.allow_uploads:
                 verdict = Verdict(False, "image", "image.upload_refused", NO_UPLOADS_REPLY)
                 return blocked(verdict, "request", alias, stream, include_usage, email, asked)
             verdict = engine.screen_request([asked]) if asked else PASS
             if not verdict.allowed:
                 return blocked(verdict, "request", alias, stream, include_usage, email, asked)
+
+            def history_rule(m: dict) -> Optional[str]:
+                # The same tests the turn faced when it was the newest, so a
+                # turn refused then is not answered now.
+                if unreadable_parts(m.get("content")):
+                    return "content.unreadable"
+                if payloads.newest_user_images([m]) and not settings.allow_uploads:
+                    return "image.upload_refused"
+                text = content_text(m.get("content"))
+                v = engine.screen_request([text]) if text else PASS
+                return None if v.allowed else (v.rule or v.tier)
+
+            messages, redacted = payloads.redact_history(messages, history_rule)
+            if redacted:
+                logger.info("kitegate: removed %d earlier turn(s) from the history: %s",
+                            len(redacted), ",".join(redacted))
             verdict = engine.screen_response(tool_texts(messages) + payloads.assistant_history(messages))
             if not verdict.allowed:
                 return blocked(verdict, "history", alias, stream, include_usage, email, asked)
             outbound = payloads.upstream_body(
-                body, upstream_model=settings.child_models[alias.lower()], engine=engine,
+                {**body, "messages": messages},
+                upstream_model=settings.child_models[alias.lower()], engine=engine,
                 inject_framing=settings.inject_framing, kind=settings.upstream_kind,
-                nemo_config_id=settings.nemo_config_id, client_system=settings.client_system)
+                nemo_config_id=settings.nemo_config_id, client_system=settings.client_system,
+                allow_images=settings.allow_uploads)
         except Exception:  # fail closed
             logger.exception("kitegate screening failed; blocking")
             return blocked(Verdict(False, "error", "error", ERROR_REPLY), "error", alias, stream,
@@ -348,21 +428,27 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
 
         upstream_model = outbound["model"]
         use_tool = (photo_tool is not None and payloads.offers_own_tool(body, TOOL_NAME)
-                    and upstream_model not in no_tools)
+                    and not tools_refused(upstream_model))
         client_tools = set(payloads.tool_names(body))
         if use_tool:
             outbound = payloads.with_tool(outbound, photo_tool.spec)
         r = await post_upstream(outbound)
         if use_tool and r is not None and r.status_code in (400, 422):
             # Most likely a model without tool calling. Answer in words
-            # rather than failing every question, and stop offering it.
-            logger.warning("kitegate: upstream model %s refused the photo tool (HTTP %s), so it "
-                           "answers without pictures from now on. Use a model with tool calling, "
-                           "or set KITEGATE_PHOTOS=off", upstream_model, r.status_code)
-            no_tools.add(upstream_model)
+            # rather than failing every question.
             use_tool = False
             outbound = payloads.without_own_tool(outbound, TOOL_NAME)
             r = await post_upstream(outbound)
+            if r is not None and r.status_code == 200:
+                # Only now is it the tool that was refused. If the retry
+                # fails too, the request itself was bad (a client sent an
+                # out-of-range parameter, say), and one such request must not
+                # switch pictures off for everyone else.
+                no_tools[upstream_model] = time.monotonic() + NO_TOOLS_TTL
+                logger.warning("kitegate: upstream model %s refused the photo tool, so it answers "
+                               "without pictures for the next %d minutes. Use a model with tool "
+                               "calling, or set KITEGATE_PHOTOS=off", upstream_model,
+                               NO_TOOLS_TTL // 60)
         failure = upstream_failure(r)
         if failure is not None:
             return failure
@@ -416,6 +502,28 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             return blocked(Verdict(False, "error", "error", ERROR_REPLY), "error", alias, stream,
                            include_usage, email, asked)
         return respond(clean, stream, include_usage)
+
+    in_flight = 0
+
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request) -> Response:
+        nonlocal in_flight
+        if not authorised(request):
+            return _error(401, "Invalid or missing API key.", "unauthorised")
+        # Each request holds a whole reply in memory while it is screened, and
+        # a model call open for as long as the model takes, so the number in
+        # progress is capped. Over the cap is a quick, honest "busy", not a
+        # queue that grows until the gateway falls over.
+        if in_flight >= settings.max_concurrency:
+            logger.warning("kitegate: %d requests in progress, refusing another", in_flight)
+            response = _error(429, "The service is busy. Try again in a moment.", "busy")
+            response.headers["retry-after"] = "2"
+            return response
+        in_flight += 1
+        try:
+            return await handle_chat(request)
+        finally:
+            in_flight -= 1
 
     return app
 

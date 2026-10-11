@@ -149,6 +149,18 @@ def test_a_short_response_does_not_pass_the_images_it_missed():
     assert verdicts[PHOTO] is None and verdicts[OTHER] == "image.unscreened"
 
 
+def test_cache_forgets_a_verdict_after_its_ttl():
+    # A picture can be replaced under the same URL, so a pass is not forever.
+    now = [1000.0]
+    cache = ScanCache(ttl=60, clock=lambda: now[0])
+    cache.put(PHOTO, None)
+    now[0] += 59
+    assert cache.get(PHOTO) == (True, None)
+    now[0] += 2
+    assert cache.get(PHOTO) == (False, None)
+    assert len(cache) == 0
+
+
 def test_cache_remembers_both_answers():
     cache = ScanCache(limit=2)
     cache.put(PHOTO, None)
@@ -472,3 +484,15 @@ def test_a_misspelled_threshold_is_refused_not_ignored():
            "KITEGATE_CHILD_MODELS": "kids", "KITEGATE_IMAGE_THRESHOLDS": "sexaul=0.05"}
     with pytest.raises(SettingsError, match="unknown category"):
         GatewaySettings.from_env(env)
+
+
+# -- a moderation result that does not cover the categories is not a pass ----------
+@pytest.mark.parametrize("scores", [{}, {"nsfw": 0.0}, {"sexual": 0.0}])
+def test_a_result_missing_thresholded_categories_is_unscreened(scores):
+    out = results_by_url([PHOTO], {"results": [{"category_scores": scores}]})
+    assert out == {PHOTO: "image.unscreened"}
+
+
+def test_a_result_with_every_category_can_pass():
+    scores = {name: 0.0 for name in IMAGE_THRESHOLDS}
+    assert results_by_url([PHOTO], {"results": [{"category_scores": scores}]}) == {PHOTO: None}

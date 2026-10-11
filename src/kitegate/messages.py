@@ -27,6 +27,29 @@ _TEXT_PART_TYPES = ("text", "input_text", "output_text")
 # shape because images became visible to the policy.
 _IMAGE_PART_TYPES = ("image_url", "input_image", "image")
 
+# Refused rather than forwarded: audio, files and anything else a model can
+# read but the screen cannot. Worded like NO_UPLOADS_REPLY.
+UNREADABLE_REPLY = ("I can only read typed words, sorry. "
+                    "Tell me in words what you would like to know and I'll do my best.")
+
+
+def unreadable_parts(content) -> List[str]:
+    """Types of the parts of a message the screen cannot read.
+
+    Text is screened and pictures have their own policy; anything else
+    (input_audio, file, a type invented next year) would reach the model
+    unscreened, so a caller refuses a message that has one. A part with no
+    type counts as unreadable.
+    """
+    if not isinstance(content, list):
+        return []
+    out = []
+    for part in content:
+        kind = part.get("type") if isinstance(part, dict) else None
+        if kind not in _TEXT_PART_TYPES and kind not in _IMAGE_PART_TYPES:
+            out.append(str(kind))
+    return out
+
 
 def split_list(value: Union[str, Iterable[str], None]) -> FrozenSet[str]:
     """A comma-separated setting (or an iterable) as a lower-cased set."""
@@ -69,6 +92,27 @@ def image_parts(content) -> List[str]:
             value = value.get("url")
         if isinstance(value, str) and value.strip():
             out.append(value.strip())
+    return out
+
+
+def readable_content(content, images: bool = False):
+    """A message's content with every part the screen cannot read taken out.
+
+    A string is returned as it is. A list keeps its text parts (and picture
+    parts when `images` is true), each reduced to the fields that matter, so a
+    part cannot carry an extra field to the model that was never screened.
+    """
+    if not isinstance(content, list):
+        return content
+    out = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in _TEXT_PART_TYPES:
+            out.append({"type": kind, "text": str(part.get("text") or "")})
+        elif images and kind in _IMAGE_PART_TYPES:
+            out.append(part)
     return out
 
 

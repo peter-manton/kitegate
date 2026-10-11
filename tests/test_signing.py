@@ -98,6 +98,29 @@ def test_unsigned_pack_refused_when_required(tmp_path):
         load_pack(path, trust=PackTrust.from_keys([], require=True))
 
 
+def test_signatures_are_required_when_the_setting_is_not_mentioned():
+    assert PackTrust.from_env({}).require is True
+    assert PackTrust.from_env({"KITEGATE_REQUIRE_SIGNED_PACKS": ""}).require is True
+
+
+@pytest.mark.parametrize("value", ["false", "FALSE", "0", "no", "off", " false "])
+def test_only_an_explicit_false_turns_the_requirement_off(value):
+    assert PackTrust.from_env({"KITEGATE_REQUIRE_SIGNED_PACKS": value}).require is False
+
+
+@pytest.mark.parametrize("value", ["flase", "nope", "disabled", "true", "1"])
+def test_a_typo_does_not_turn_the_requirement_off(value):
+    assert PackTrust.from_env({"KITEGATE_REQUIRE_SIGNED_PACKS": value}).require is True
+
+
+def test_an_unsigned_pack_is_refused_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("KITEGATE_REQUIRE_SIGNED_PACKS", raising=False)
+    path = tmp_path / "plain.yaml"
+    path.write_text(PACK, encoding="utf-8")
+    with pytest.raises(PackError, match="not signed"):
+        load_pack(path)
+
+
 def test_unsigned_pack_loads_with_a_warning_when_not_required(tmp_path, caplog):
     path = tmp_path / "plain.yaml"
     path.write_text(PACK, encoding="utf-8")

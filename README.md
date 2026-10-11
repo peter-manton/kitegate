@@ -119,7 +119,7 @@ signed. Each `pack.yaml` has a detached Ed25519 signature in `pack.yaml.sig`.
   pack will not load.
 - Your own packs are checked against the public keys you trust. A signature
   that does not match, or comes from a key you have not trusted, is always
-  refused. Unsigned packs load with a warning unless you require signatures.
+  refused. Unsigned packs are refused unless you set `KITEGATE_REQUIRE_SIGNED_PACKS=false`, which loads them with a warning.
 
 ```bash
 kitegate-pack keygen --out ~/.kitegate --name family-packs   # once; keep the .pem private
@@ -128,7 +128,7 @@ kitegate-pack verify my-pack.yaml --key ~/.kitegate/family-packs.pub
 ```
 
 Where packs are loaded, set `KITEGATE_PACK_KEYS` to your public key (comma
-separated for several) and `KITEGATE_REQUIRE_SIGNED_PACKS=true`. Keep the private key off
+separated for several). Signatures are required unless you set `KITEGATE_REQUIRE_SIGNED_PACKS=false`. Keep the private key off
 any machine that serves children: whoever holds it can sign packs you trust.
 
 ## Deploy it: one gateway for every front end

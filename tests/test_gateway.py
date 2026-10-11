@@ -433,7 +433,8 @@ def test_pack_header_selects_pack(up):
 
 def test_default_pack_may_be_a_path_with_capitals(up, tmp_path, monkeypatch):
     from importlib import resources
-    monkeypatch.delenv("KITEGATE_REQUIRE_SIGNED_PACKS", raising=False)
+    # An unsigned pack, on purpose: this test is about the path, not the signature.
+    monkeypatch.setenv("KITEGATE_REQUIRE_SIGNED_PACKS", "false")
     pack = tmp_path / "Family" / "My-Pack.yaml"
     pack.parent.mkdir()
     pack.write_text(resources.files("kitegate").joinpath("packs/secular-neutral.yaml")

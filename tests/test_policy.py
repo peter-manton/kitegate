@@ -17,8 +17,12 @@ import pytest
 
 from kitegate import PackError, PolicyEngine, bundled_packs, load_pack
 from kitegate.core import DISTRESS, HARD_BLOCK, PERSONA, PERSONA_REPLY, PII
+from kitegate.signing import PackTrust
 
 PACKS = bundled_packs()
+# These tests are about what a pack may contain, so their throwaway packs are
+# deliberately unsigned. Signatures are tested in test_signing.py.
+UNSIGNED_OK = PackTrust.from_keys([], require=False)
 
 INNOCENT = [
     # -- substring-filter traps: the reason this file exists -------------------
@@ -587,7 +591,7 @@ def test_pack_cannot_add_unknown_keys(tmp_path):
     bad.write_text("name: x\ntrusted_adult: y\ndisable_distress: true\n"
                    "replies: {hard_block: a, redirect: b, pii: c}\n", encoding="utf-8")
     with pytest.raises(PackError, match="unknown keys"):
-        load_pack(bad)
+        load_pack(bad, trust=UNSIGNED_OK)
 
 
 def test_pack_patterns_must_be_word_anchored(tmp_path):
@@ -595,4 +599,4 @@ def test_pack_patterns_must_be_word_anchored(tmp_path):
     bad.write_text("name: x\ntrusted_adult: y\nredirect: {sports: 'ball'}\n"
                    "replies: {hard_block: a, redirect: b, pii: c}\n", encoding="utf-8")
     with pytest.raises(PackError, match=r"must start with"):
-        load_pack(bad)
+        load_pack(bad, trust=UNSIGNED_OK)

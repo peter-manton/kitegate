@@ -6,8 +6,8 @@
     kitegate-pack key-id ~/.kitegate/school-packs.pub
 
 Then trust the public key where packs are loaded: KITEGATE_PACK_KEYS=<public
-key> (comma-separated for several), and KITEGATE_REQUIRE_SIGNED_PACKS=true
-to refuse anything unsigned. Keep the .pem file private and off any server
+key> (comma-separated for several). Unsigned packs are refused unless
+KITEGATE_REQUIRE_SIGNED_PACKS=false. Keep the .pem file private and off any server
 that loads packs: whoever holds it can sign packs your deployment trusts.
 """
 from __future__ import annotations

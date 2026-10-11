@@ -13,7 +13,9 @@
     KITEGATE_PACK                     default values pack (default: secular-neutral)
     KITEGATE_ALLOWED_PACKS            packs a client may pick per request with x-kitegate-pack
     KITEGATE_PACK_KEYS                extra public keys trusted to sign packs (see signing.py)
-    KITEGATE_REQUIRE_SIGNED_PACKS     "true": refuse any pack without a trusted signature
+    KITEGATE_REQUIRE_SIGNED_PACKS     required by default: a pack without a trusted signature is
+                                      refused. Only an explicit "false" (or 0, no, off) lets an
+                                      unsigned pack load, with a warning.
     KITEGATE_INJECT_FRAMING           "true" (default): add the pack's framing to the system message.
                                       The core framing (core.py CORE_FRAMING) is sent either way
                                       and cannot be switched off here.

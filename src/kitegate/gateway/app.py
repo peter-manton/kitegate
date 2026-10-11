@@ -81,8 +81,11 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
     if settings.image_policy == "allow":
         logger.warning("kitegate: KITEGATE_IMAGE_POLICY=allow, so pictures reach children UNCHECKED")
     if settings.image_policy == "scan" and not settings.image_hosts:
-        logger.warning("kitegate: KITEGATE_IMAGE_HOSTS=* so pictures from any host are scanned; "
-                       "a passing picture from an uncurated source is still shown")
+        logger.error("kitegate: KITEGATE_IMAGE_HOSTS=* so pictures from ANY host are shown if they "
+                     "pass a scan. The scanner fetches a picture once and the child's browser "
+                     "fetches it again later, and a host you do not control can serve each a "
+                     "different one. Set KITEGATE_IMAGE_HOSTS to the hosts you trust unless that "
+                     "is a risk you have chosen")
     if settings.image_policy == "block" and not settings.image_scan_api_key:
         # Not a warning: removing pictures is the safe outcome. But it is the
         # one that looks like a bug to an adult expecting photographs, so the

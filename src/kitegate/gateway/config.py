@@ -47,6 +47,9 @@ Pictures (see images.py for what is and is not covered):
                                       there is no safe way to show an unscanned picture.
     KITEGATE_IMAGE_SCAN_MODEL         default omni-moderation-latest
     KITEGATE_IMAGE_SCAN_TIMEOUT       seconds (default 10)
+    KITEGATE_IMAGE_CACHE_TTL          seconds a picture's verdict is trusted (default 21600,
+                                      six hours). A picture can be replaced under the same
+                                      URL, so a verdict is asked for again after this long.
     KITEGATE_IMAGE_HOSTS              hosts a picture may come from. Defaults to the hosts
                                       of the curated photo providers this project ships
                                       (TRUSTED_IMAGE_HOSTS below), so a picture the model
@@ -90,7 +93,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
-from ..images import IMAGE_THRESHOLDS
+from ..images import DEFAULT_CACHE_TTL, IMAGE_THRESHOLDS
 from ..messages import split_list
 from ..packs import bundled_packs
 from ..photos import DEFAULT_PROVIDERS, PROVIDERS, get_providers, image_hosts_for
@@ -222,6 +225,7 @@ class GatewaySettings:
     image_scan_api_key: str = ""
     image_scan_model: str = DEFAULT_SCAN_MODEL
     image_scan_timeout: float = 10.0
+    image_cache_ttl: float = DEFAULT_CACHE_TTL
     image_hosts: FrozenSet[str] = frozenset()
     image_thresholds: Optional[Dict[str, float]] = None
     allow_uploads: bool = False
@@ -338,6 +342,7 @@ class GatewaySettings:
             image_scan_api_key=scan_key,
             image_scan_model=(e.get("KITEGATE_IMAGE_SCAN_MODEL") or DEFAULT_SCAN_MODEL).strip(),
             image_scan_timeout=float(e.get("KITEGATE_IMAGE_SCAN_TIMEOUT") or 10),
+            image_cache_ttl=float(e.get("KITEGATE_IMAGE_CACHE_TTL") or DEFAULT_CACHE_TTL),
             image_hosts=image_hosts,
             image_thresholds=_parse_thresholds(e.get("KITEGATE_IMAGE_THRESHOLDS") or ""),
             allow_uploads=(e.get("KITEGATE_IMAGE_UPLOADS") or "").strip().lower() in ("allow", *_TRUE),

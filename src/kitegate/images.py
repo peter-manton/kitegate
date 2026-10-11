@@ -54,7 +54,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+import time
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 # Only the categories the moderation model actually applies to IMAGE input.
@@ -419,31 +420,48 @@ def strip_images(text: str, urls: Iterable[str]) -> str:
     return out.strip()
 
 
+#: How long a verdict is trusted, in seconds. The address of a picture is not
+#: the picture: a Wikimedia file can be replaced (or vandalised) under the same
+#: URL, and the moderation service fetched it once. An answer that never
+#: expires would keep showing a replaced picture on the strength of a check
+#: made on the old one, so every verdict is re-asked after this long.
+DEFAULT_CACHE_TTL = 6 * 60 * 60.0
+
+
 class ScanCache:
-    """Remembered verdicts, keyed by URL.
+    """Remembered verdicts, keyed by URL, for a limited time.
 
     The reason the hosted option is cheap in practice. A children's
-    encyclopedia has a very heavy head — tigers, volcanoes, the Romans — and a
-    public lead image has the same verdict for every child, forever. After a
-    short warm-up almost every request is a cache hit and makes no API call at
-    all.
+    encyclopedia has a very heavy head (tigers, volcanoes, the Romans) and a
+    public lead image has the same verdict for every child for as long as the
+    picture is the same one. After a short warm-up almost every request is a
+    cache hit and makes no API call at all.
 
     Bounded and in-memory: a safety component should not be able to grow until
-    the process dies. Oldest entries go first, which suits this access pattern because the
-    popular subjects keep being re-inserted.
+    the process dies. Oldest entries go first, which suits this access pattern
+    because the popular subjects keep being re-inserted. An entry also expires
+    after `ttl` seconds (DEFAULT_CACHE_TTL), so a replaced picture is checked
+    again; the popular subjects cost one call per expiry, not one per child.
     """
 
-    def __init__(self, limit: int = 4096) -> None:
+    def __init__(self, limit: int = 4096, ttl: float = DEFAULT_CACHE_TTL,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.limit = max(1, int(limit))
-        self._entries: "Dict[str, Optional[str]]" = {}
+        self.ttl = max(0.0, float(ttl))
+        self._clock = clock
+        self._entries: "Dict[str, Tuple[Optional[str], float]]" = {}
         self.hits = 0
         self.misses = 0
 
     def get(self, url: str) -> Tuple[bool, Optional[str]]:
         """(known, rule). rule is None for a picture that passed."""
-        if url in self._entries:
-            self.hits += 1
-            return True, self._entries[url]
+        entry = self._entries.get(url)
+        if entry is not None:
+            rule, expires = entry
+            if self._clock() < expires:
+                self.hits += 1
+                return True, rule
+            del self._entries[url]  # stale: ask again
         self.misses += 1
         return False, None
 
@@ -452,7 +470,7 @@ class ScanCache:
             del self._entries[url]
         elif len(self._entries) >= self.limit:
             self._entries.pop(next(iter(self._entries)))
-        self._entries[url] = rule
+        self._entries[url] = (rule, self._clock() + self.ttl)
 
     def __len__(self) -> int:
         return len(self._entries)

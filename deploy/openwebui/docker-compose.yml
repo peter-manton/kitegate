@@ -27,9 +27,11 @@ services:
       KITEGATE_PACK: ${KITEGATE_PACK:-secular-neutral}
       KITEGATE_PACK_KEYS: ${KITEGATE_PACK_KEYS:-}
       KITEGATE_REQUIRE_SIGNED_PACKS: "true"
-      # A system prompt set in Open WebUI: blank folds it in below the core
-      # and pack framing, "drop" ignores it.
-      KITEGATE_CLIENT_SYSTEM: ${KITEGATE_CLIENT_SYSTEM:-}
+      # A system prompt set in Open WebUI (an admin's, or a user's own). Blank
+      # means "drop": it is ignored, because a user can write their own and it
+      # would sit inside the gateway's trusted message. "fold" puts it in below
+      # the core and pack framing, after the reply screen has checked it.
+      KITEGATE_CLIENT_SYSTEM: ${KITEGATE_CLIENT_SYSTEM:-drop}
       # Adults' models pass through unscreened, for KITEGATE_ADULT_USERS only.
       KITEGATE_PASSTHROUGH: "true"
       KITEGATE_BLOCK_LOG: /var/lib/kitegate/blocks.jsonl

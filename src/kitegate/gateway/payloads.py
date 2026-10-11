@@ -5,6 +5,7 @@ Kept apart from the HTTP layer so each rule is plain-dict in, plain-dict out.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import uuid
@@ -14,6 +15,8 @@ from ..core import CORE_FRAMING, DISTRESS_REPLY
 from ..engine import PolicyEngine, Verdict
 from ..images import image_urls, strip_images
 from ..messages import content_text, image_parts, tool_call_arguments
+
+logger = logging.getLogger("kitegate.gateway")
 
 # Fields some models return alongside the answer. Output rails do not check
 # reasoning (NeMo says so explicitly), and children do not need it, so it is
@@ -202,6 +205,23 @@ def system_message(engine: PolicyEngine, *, inject_framing: bool, client_texts: 
     if inject_framing and engine.pack.framing:
         parts.append(engine.pack.framing)
     texts = [t.strip() for t in client_texts if t and t.strip()]
+    if client_system == "fold":
+        # Folded text sits inside the gateway's own, trusted message, and a
+        # front end can fill it with words a user wrote (a personal system
+        # prompt, a memory, a retrieved page). So it gets the reply screen
+        # first, and a text that fails is dropped, not folded in. Dropped,
+        # not blocked: an admin's own "never discuss self-harm" names what it
+        # forbids, and refusing every question over it would be worse than
+        # ignoring that one prompt, which is logged.
+        kept = []
+        for text in texts:
+            verdict = engine.screen_response([text])
+            if verdict.allowed:
+                kept.append(text)
+            else:
+                logger.warning("kitegate: client system text dropped, it failed the screen (%s)",
+                               verdict.rule)
+        texts = kept
     if client_system == "fold" and texts:
         parts.append(CLIENT_SYSTEM_HEADER)
         parts.extend(texts)

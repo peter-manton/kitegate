@@ -55,9 +55,9 @@ admin, and each child gets a sign-in.
   personal details, and leaving a child alone with distress. The checks screen
   the reply anyway; the framing means fewer replies need replacing.
 - **The front end cannot out-rank it.** The gateway's system message is the
-  only one a children's model gets. A front end's own system prompt is folded
-  in after the core and the pack, ranked below them, or dropped
-  (`KITEGATE_CLIENT_SYSTEM=drop`).
+  only one a children's model gets. A front end's own system prompt is screened
+  and folded in after the core and the pack, ranked below them, or dropped
+  (`KITEGATE_CLIENT_SYSTEM=drop`, which the Open WebUI bundle sets).
 - **Pictures are screened, not forbidden.** A child sees a photograph only if
   it came from a curated source (a Wikipedia article's lead image, NASA's
   public library) *and* a moderation model did not object to it. Both checks

@@ -601,3 +601,20 @@ def test_only_screened_fields_come_back_to_the_child(up):
     with make(up) as c:
         msg = ask(c, "hi").json()["choices"][0]["message"]
     assert set(msg) <= {"role", "content", "refusal", "tool_calls"}
+
+
+@pytest.mark.parametrize("field,value", [("stream_options", "yes"), ("tools", 5), ("messages", "hi")])
+def test_a_field_of_the_wrong_type_is_a_400_not_a_crash(up, field, value):
+    body = {"model": "kids-encyclopedia", "messages": [{"role": "user", "content": "hi"}]}
+    body[field] = value
+    with make(up) as c:
+        r = c.post("/v1/chat/completions", headers=CHILD, json=body)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_request"
+    assert not up.chat_calls
+
+
+def test_a_model_name_with_spaces_around_it_is_the_childrens_model(up):
+    up.replies = [completion("Tigers are big cats.")]
+    with make(up) as c:
+        body = ask(c, "tigers", model=" kids-encyclopedia ").json()
+    assert body["kitegate"]["allowed"] and body["choices"][0]["message"]["content"]

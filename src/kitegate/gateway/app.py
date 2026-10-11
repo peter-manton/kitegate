@@ -314,9 +314,13 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
         if not isinstance(body, dict) or not body.get("model"):
             return _error(400, "A model is required.", "model_required")
 
-        model = str(body["model"])
+        # Stripped, because Scope matches a model name with its spaces removed:
+        # without this a padded alias is a children's model that then fails
+        # the settings lookup below.
+        model = str(body["model"]).strip()
         stream = bool(body.get("stream"))
-        include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        options = body.get("stream_options")
+        include_usage = isinstance(options, dict) and bool(options.get("include_usage"))
         email = email_from_headers(request.headers)
         if settings.passthrough and not email:
             # With adult traffic flowing through, a missing identity is a
@@ -337,6 +341,11 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
                 verdict = Verdict(False, "policy", "policy.not_adult", WRONG_MODEL_REPLY)
                 return blocked(verdict, "policy", model, stream, include_usage, email, "")
             return await passthrough(raw, stream)
+
+        # A field of the wrong type is the client's mistake, not a crash.
+        for field, kind in (("messages", list), ("tools", list), ("stream_options", dict)):
+            if body.get(field) is not None and not isinstance(body[field], kind):
+                return _error(400, f"'{field}' must be a {kind.__name__}.", "invalid_request")
 
         alias = model
         pack = (request.headers.get(PACK_HEADER) or settings.pack).strip().lower()

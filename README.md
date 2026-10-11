@@ -143,7 +143,7 @@ The gateway (the `kitegate` command, or the Docker image) is an
 OpenAI-compatible endpoint (`/v1/chat/completions`,
 `/v1/models`). For a children's model it refuses known child accounts on any
 other model, screens the child's newest message and the tool results in the
-history, asks upstream for the whole reply, screens it, and only then answers
+history, removes earlier turns that would have been blocked, asks upstream for the whole reply, screens it, and only then answers
 (replaying it as a stream if asked). Blocks come back as a normal reply in the
 pack's words, with a `kitegate` verdict object alongside for apps that record
 them. Distress goes to an optional block log and alert webhook.

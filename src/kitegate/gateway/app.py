@@ -33,8 +33,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .. import PolicyEngine, load_pack
 from ..blocklog import BlockLog
 from ..engine import PASS, Verdict
-from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, WRONG_MODEL_REPLY, Scope, email_from_headers,
-                        tool_call_arguments, tool_texts)
+from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, WRONG_MODEL_REPLY, Scope, content_text,
+                        email_from_headers, tool_call_arguments, tool_texts)
 from ..photos import image_hosts_for
 from . import payloads
 from .config import GatewaySettings
@@ -334,11 +334,26 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             verdict = engine.screen_request([asked]) if asked else PASS
             if not verdict.allowed:
                 return blocked(verdict, "request", alias, stream, include_usage, email, asked)
+
+            def history_rule(m: dict) -> Optional[str]:
+                # The same tests the turn faced when it was the newest, so a
+                # turn refused then is not answered now.
+                if payloads.newest_user_images([m]) and not settings.allow_uploads:
+                    return "image.upload_refused"
+                text = content_text(m.get("content"))
+                v = engine.screen_request([text]) if text else PASS
+                return None if v.allowed else (v.rule or v.tier)
+
+            messages, redacted = payloads.redact_history(messages, history_rule)
+            if redacted:
+                logger.info("kitegate: removed %d earlier turn(s) from the history: %s",
+                            len(redacted), ",".join(redacted))
             verdict = engine.screen_response(tool_texts(messages) + payloads.assistant_history(messages))
             if not verdict.allowed:
                 return blocked(verdict, "history", alias, stream, include_usage, email, asked)
             outbound = payloads.upstream_body(
-                body, upstream_model=settings.child_models[alias.lower()], engine=engine,
+                {**body, "messages": messages},
+                upstream_model=settings.child_models[alias.lower()], engine=engine,
                 inject_framing=settings.inject_framing, kind=settings.upstream_kind,
                 nemo_config_id=settings.nemo_config_id, client_system=settings.client_system)
         except Exception:  # fail closed

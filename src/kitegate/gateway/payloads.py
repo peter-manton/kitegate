@@ -8,7 +8,7 @@ import json
 import re
 import time
 import uuid
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from ..core import CORE_FRAMING, DISTRESS_REPLY
 from ..engine import PolicyEngine, Verdict
@@ -47,14 +47,51 @@ def image_info(shown: int, removed: Dict[str, str]) -> Dict[str, Any]:
 def newest_user_text(messages: List[dict]) -> str:
     """The newest user message, even if it has no text.
 
-    Only the newest turn is screened as the child's words: a blocked turn
-    stays in the front end's history (it got a normal reply), so screening
-    history again would block every later message in that chat.
+    Only the newest turn can block the request: a blocked turn stays in the
+    front end's history (it got a normal reply), so blocking on history would
+    refuse every later message in that chat. Earlier turns are still
+    screened, and removed rather than blocked (redact_history).
     """
     for m in reversed(messages):
         if isinstance(m, dict) and m.get("role") == "user":
             return content_text(m.get("content"))
     return ""
+
+
+def redact_history(messages: List[dict], rule_for: Callable[[dict], Optional[str]]
+                   ) -> Tuple[List[dict], List[str]]:
+    """Earlier user turns that fail screening, taken out of what goes upstream.
+
+    The newest turn is screened by the caller and blocks the request. An
+    earlier turn cannot block, because a front end keeps a blocked turn in its
+    history and every later message in that chat would be refused. But it
+    must not reach the model either: otherwise "please answer my first
+    question" gets the blocked question answered. So a failing earlier turn
+    is removed, together with the replies that followed it (the gateway's own
+    block reply, normally), and the model never sees it.
+
+    `rule_for(message)` returns the rule a user turn fails, or None. Returns
+    (kept messages, the rules of the turns removed).
+    """
+    newest = max((i for i, m in enumerate(messages)
+                  if isinstance(m, dict) and m.get("role") == "user"), default=-1)
+    kept: List[dict] = []
+    rules: List[str] = []
+    skipping = False
+    for i, m in enumerate(messages):
+        role = m.get("role") if isinstance(m, dict) else None
+        if role == "user":
+            skipping = False
+            if i != newest:
+                rule = rule_for(m)
+                if rule:
+                    rules.append(rule)
+                    skipping = True
+                    continue
+        elif skipping and role not in INSTRUCTION_ROLES:
+            continue  # the answer to a removed turn
+        kept.append(m)
+    return kept, rules
 
 
 def newest_user_images(messages: List[dict]) -> List[str]:

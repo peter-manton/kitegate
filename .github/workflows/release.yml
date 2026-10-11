@@ -1,0 +1,71 @@
+name: release
+
+# Cuts a release on every push to main (which, with squash-only merging, means
+# every merged PR), once the test suite has passed on that exact commit.
+# python-semantic-release reads the Conventional Commit messages since the
+# last tag and decides whether there is anything to release; most pushes
+# (docs, ci, chore, build) release nothing. Configuration is in
+# [tool.semantic_release] in pyproject.toml.
+#
+# The release commit and tag are pushed with GITHUB_TOKEN, which by design
+# does not trigger further workflow runs, so the release cannot loop. If main
+# is ever put behind branch protection, GITHUB_TOKEN will no longer be allowed
+# to push to it, and this needs a GitHub App token with a bypass instead.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    # One release at a time, in order: two quick merges must not race to tag.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # The branch rather than the bare SHA, since the release commit is
+          # pushed back to it; full history, since the next version is worked
+          # out from every commit since the last tag.
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      # The branch may have moved on since this run started. Release the
+      # commit that was tested, not whatever is newest; a later push gets its
+      # own run.
+      - name: Check out the tested commit
+        run: git reset --hard "$GITHUB_SHA"
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.14"
+
+      # The package itself is installed because the build_command rebuilds the
+      # Open WebUI files in dist/, and that imports kitegate.
+      - run: pip install -e . "python-semantic-release==10.7.0" "build==1.6.1"
+
+      - name: Version, changelog, commit, tag and GitHub Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          semantic-release -v version
+
+      - name: Attach the package and the Open WebUI files to the release
+        if: steps.release.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: semantic-release -v publish --tag "${{ steps.release.outputs.tag }}"

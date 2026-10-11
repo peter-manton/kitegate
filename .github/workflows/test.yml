@@ -1,8 +1,12 @@
 name: test
 
 on:
+  # main is tested by release.yml, which calls this workflow and releases only
+  # if it passes, so a push there is not tested twice.
   push:
+    branches-ignore: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

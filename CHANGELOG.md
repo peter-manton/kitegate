@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-10-11)
+
+### Bug Fixes
+
+- **gateway**: Close the gaps found in the security review
+  ([#11](https://github.com/peter-manton/kitegate/pull/11),
+  [`420d8e6`](https://github.com/peter-manton/kitegate/commit/420d8e60ec371437939a7732ad5a263da6393ac9))
+
+
 ## v0.2.1 (2026-10-11)
 
 ### Bug Fixes

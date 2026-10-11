@@ -93,6 +93,13 @@ services:
       ENABLE_IMAGE_GENERATION: "False"
       ENABLE_COMMUNITY_SHARING: "False"
       ENABLE_EVALUATION_ARENA_MODELS: "False"
+      # Open WebUI 0.12 sends about forty built-in tools (notes, memory,
+      # tasks, automations, fetch_url, ...) with every chat from the browser.
+      # None of them belong in a children's encyclopedia, and a small model
+      # lost among them never reaches the gateway's find_photo and answers
+      # with something like "which task would you like to update?". Off for
+      # every model, so the gateway's own tool is the only one on offer.
+      DEFAULT_MODEL_METADATA: '{"capabilities": {"builtin_tools": false}}'
       # New sign-ups wait for an admin to approve them.
       DEFAULT_USER_ROLE: pending
     volumes:

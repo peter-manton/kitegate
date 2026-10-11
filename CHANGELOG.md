@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.2.1 (2026-10-11)
+
+### Bug Fixes
+
+- **release**: Create the release as a draft for immutable releases
+  ([#10](https://github.com/peter-manton/kitegate/pull/10),
+  [`d850a36`](https://github.com/peter-manton/kitegate/commit/d850a36f3a00d048d3decdfd6ada27c5e8d30af3))
+
+
 ## v0.2.0 (2026-10-11)
 
 ### Bug Fixes

@@ -89,6 +89,7 @@ Day to day, from `deploy/openwebui`:
 | To | Run |
 |---|---|
 | add or remove a child | edit `KITEGATE_CHILD_USERS` in `.env`, then `docker compose up -d` |
+| add or remove an adult | edit `KITEGATE_ADULT_USERS` in `.env` (only listed adults can use a model other than the children's), then `docker compose up -d` |
 | change the pack or model | edit `.env`, then `docker compose up -d` |
 | read the block log | `docker compose exec kitegate cat /var/lib/kitegate/blocks.jsonl` |
 | update | `git pull`, then `docker compose up -d --build` |
@@ -113,7 +114,8 @@ normal replies, and distress can alert an adult.
    ```bash
    cp adapters/gateway/gateway.env.example adapters/gateway/gateway.env
    # fill in: KITEGATE_API_KEY, KITEGATE_UPSTREAM_URL/_API_KEY,
-   # KITEGATE_CHILD_MODELS, KITEGATE_CHILD_USERS, KITEGATE_PASSTHROUGH=true
+   # KITEGATE_CHILD_MODELS, KITEGATE_CHILD_USERS, KITEGATE_PASSTHROUGH=true,
+   # KITEGATE_ADULT_USERS (the only accounts served an unscreened model)
    docker compose -f adapters/gateway/docker-compose.yml up -d --build
    ```
 

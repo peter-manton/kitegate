@@ -383,7 +383,8 @@ def test_a_refused_tool_fallback_keeps_the_clients_tools(fake):
 
 def test_not_offered_on_adult_passthrough(fake):
     fake.replies = [reply("Adult answer.")]
-    with make(fake, passthrough=True, passthrough_url="http://upstream/v1") as c:
+    with make(fake, passthrough=True, passthrough_url="http://upstream/v1",
+              adult_users=frozenset({"parent@example.org"})) as c:
         c.post("/v1/chat/completions",
                headers={"Authorization": f"Bearer {KEY}", "x-kitegate-user-email": "parent@example.org"},
                json={"model": "gpt-adult", "messages": [{"role": "user", "content": "hi"}]})

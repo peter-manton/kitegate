@@ -22,13 +22,15 @@ services:
       KITEGATE_UPSTREAM_KIND: openai
       KITEGATE_CHILD_MODELS: kids-encyclopedia=${KITEGATE_UPSTREAM_MODEL:?run setup first}
       KITEGATE_CHILD_USERS: ${KITEGATE_CHILD_USERS:-}
+      # Only these accounts get an adult model. Anyone else is refused on it.
+      KITEGATE_ADULT_USERS: ${KITEGATE_ADULT_USERS:-}
       KITEGATE_PACK: ${KITEGATE_PACK:-secular-neutral}
       KITEGATE_PACK_KEYS: ${KITEGATE_PACK_KEYS:-}
       KITEGATE_REQUIRE_SIGNED_PACKS: "true"
       # A system prompt set in Open WebUI: blank folds it in below the core
       # and pack framing, "drop" ignores it.
       KITEGATE_CLIENT_SYSTEM: ${KITEGATE_CLIENT_SYSTEM:-}
-      # Adults' models pass through unscreened; children are refused on them.
+      # Adults' models pass through unscreened, for KITEGATE_ADULT_USERS only.
       KITEGATE_PASSTHROUGH: "true"
       KITEGATE_BLOCK_LOG: /var/lib/kitegate/blocks.jsonl
       KITEGATE_ALERT_WEBHOOK: ${KITEGATE_ALERT_WEBHOOK:-}

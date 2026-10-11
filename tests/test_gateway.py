@@ -14,6 +14,7 @@ KEY = "test-key-0123456789abcdef"
 AUTH = {"Authorization": f"Bearer {KEY}"}
 CHILD = {**AUTH, "x-kitegate-user-email": "child@example.org"}
 ADULT = {**AUTH, "x-kitegate-user-email": "parent@example.org"}
+ADULTS = frozenset({"parent@example.org"})
 
 
 class Upstream:
@@ -352,15 +353,36 @@ def test_stream_block_sends_only_the_reply(up):
 
 # -- identity and passthrough ---------------------------------------------------------
 def test_child_refused_on_other_model(up):
-    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1", adult_users=ADULTS) as c:
         body = ask(c, "hi", model="gpt-adult").json()
     assert "isn't available" in body["choices"][0]["message"]["content"]
     assert body["kitegate"]["rule"] == "policy.wrong_model" and not up.chat_calls
 
 
+def test_unlisted_account_is_refused_on_an_adult_model(up):
+    # Not a child and not an adult: nobody listed them. They get the
+    # children's rules, not an unscreened model.
+    stranger = {**AUTH, "x-kitegate-user-email": "new-signup@example.org"}
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1", adult_users=ADULTS) as c:
+        body = ask(c, "hi", headers=stranger, model="gpt-adult").json()
+    assert body["kitegate"]["rule"] == "policy.not_adult"
+    assert not up.chat_calls
+
+
+def test_passthrough_with_no_adults_serves_nobody(up):
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+        body = ask(c, "hi", headers=ADULT, model="gpt-adult").json()
+    assert body["kitegate"]["rule"] == "policy.not_adult"
+
+
+def test_a_user_cannot_be_both_child_and_adult():
+    with pytest.raises(SettingsError, match="both a child and an adult"):
+        settings(adult_users=frozenset({"CHILD@example.org"}))
+
+
 def test_adult_passthrough_unscreened(up):
     up.replies = [completion("Adult answer about porn regulation.")]
-    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1", adult_users=ADULTS) as c:
         r = ask(c, "porn regulation?", headers=ADULT, model="gpt-adult")
     assert r.status_code == 200 and "kitegate" not in r.json()
     assert up.chat_calls[0]["body"]["model"] == "gpt-adult"
@@ -370,7 +392,7 @@ def test_adult_passthrough_gets_no_framing_and_keeps_its_system_prompt(up):
     # Passthrough is the adult's own model, untouched: no core framing, and
     # KITEGATE_CLIENT_SYSTEM does not apply to it.
     up.replies = [completion("Adult answer.")]
-    with make(up, passthrough=True, passthrough_url="http://upstream/v1",
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1", adult_users=ADULTS,
               client_system="drop") as c:
         c.post("/v1/chat/completions", headers=ADULT, json={"model": "gpt-adult", "messages": [
             {"role": "system", "content": "Be terse."}, {"role": "user", "content": "hi"}]})
@@ -379,7 +401,7 @@ def test_adult_passthrough_gets_no_framing_and_keeps_its_system_prompt(up):
 
 
 def test_passthrough_requires_identity(up):
-    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1", adult_users=ADULTS) as c:
         r = ask(c, "hi", headers=AUTH, model="gpt-adult")
     assert r.status_code == 400 and r.json()["error"]["code"] == "identity_required"
 
@@ -390,7 +412,7 @@ def test_other_models_refused_without_passthrough(up):
 
 
 def test_models_list(up):
-    with make(up, passthrough=True, passthrough_url="http://upstream/v1") as c:
+    with make(up, passthrough=True, passthrough_url="http://upstream/v1", adult_users=ADULTS) as c:
         ids = [m["id"] for m in c.get("/v1/models", headers=AUTH).json()["data"]]
     assert ids == ["kids-encyclopedia", "gpt-adult"]
 

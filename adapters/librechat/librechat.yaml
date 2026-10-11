@@ -2,9 +2,9 @@
 #
 # Merge this into your librechat.yaml. Children and adults both use the
 # "Kitegate" endpoint; the gateway screens children's models and passes adult
-# models through (KITEGATE_PASSTHROUGH=true), refusing any child account on
-# an adult model. That only works if LibreChat has NO other way to reach a
-# model, so also set in LibreChat's .env:
+# models through for the accounts in KITEGATE_ADULT_USERS only
+# (KITEGATE_PASSTHROUGH=true), refusing everyone else on an adult model. That only works if LibreChat has
+# NO other way to reach a model, so also set in LibreChat's .env:
 #
 #   ENDPOINTS=custom          # turn off the built-in OpenAI/Anthropic/Google/agents endpoints
 #   KITEGATE_API_KEY=  # the same key as the gateway's

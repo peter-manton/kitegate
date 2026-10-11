@@ -61,6 +61,10 @@ if (-not (Test-Path .env)) {
     }
     $pack = Read-Host 'Values pack (secular-neutral, uk-school, christian-family) [secular-neutral]'
     if ($pack) { Set-Var KITEGATE_PACK $pack }
+    # Only these accounts can use an unscreened model, so the admin account
+    # you are about to create must be listed to see any model but the children's.
+    $adults = Read-Host "Adult account emails (the admin's first), comma-separated (can be added later in .env)"
+    if ($adults) { Set-Var KITEGATE_ADULT_USERS $adults }
     $kids = Read-Host "Children's account emails, comma-separated (can be added later in .env)"
     if ($kids) { Set-Var KITEGATE_CHILD_USERS $kids }
     [IO.File]::WriteAllLines((Join-Path $PSScriptRoot '.env'), [string[]]$script:lines)
@@ -81,4 +85,5 @@ $port = (Get-Content .env | Where-Object { $_ -like 'WEBUI_PORT=*' }) -replace '
 if (-not $port) { $port = '3000' }
 Write-Host ''
 Write-Host "Open http://127.0.0.1:$port and create the first account: it becomes the admin."
+Write-Host 'Use an email listed in KITEGATE_ADULT_USERS for the admin account, or it can only use the children''s model.'
 Write-Host 'Then add each child in Admin Panel > Users with an email listed in KITEGATE_CHILD_USERS.'

@@ -34,8 +34,8 @@ from .. import PolicyEngine, load_pack
 from ..blocklog import BlockLog
 from ..engine import PASS, Verdict
 from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, UNREADABLE_REPLY, WRONG_MODEL_REPLY, Scope,
-                        content_text, email_from_headers, tool_call_arguments, tool_texts,
-                        unreadable_parts)
+                        content_text, email_from_headers, split_list, tool_call_arguments,
+                        tool_texts, unreadable_parts)
 from ..photos import image_hosts_for
 from . import payloads
 from .config import GatewaySettings
@@ -59,6 +59,10 @@ def _error(status: int, message: str, code: str) -> JSONResponse:
 
 def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTransport] = None) -> FastAPI:
     scope = Scope(settings.child_models.keys(), settings.child_users)
+    adults = split_list(settings.adult_users)
+    if settings.passthrough and not adults:
+        logger.warning("kitegate: KITEGATE_PASSTHROUGH is on but KITEGATE_ADULT_USERS is empty, "
+                       "so every other model is refused. List the adults' emails to let them through")
     block_log = BlockLog(settings.block_log)
     engines: Dict[str, PolicyEngine] = {}
     for name in settings.packs:  # load every pack now: a bad pack fails at start, not mid-chat
@@ -308,6 +312,12 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
         if not scope.is_child_model(model):
             if not settings.passthrough:
                 return _error(404, f"The model '{model}' is not available here.", "model_not_found")
+            if email not in adults:
+                # Allow-listed, not deny-listed: an account nobody listed (a
+                # child added later, a second sign-up) gets the children's
+                # rules, not an unscreened model.
+                verdict = Verdict(False, "policy", "policy.not_adult", WRONG_MODEL_REPLY)
+                return blocked(verdict, "policy", model, stream, include_usage, email, "")
             return await passthrough(raw, stream)
 
         alias = model

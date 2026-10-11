@@ -7,6 +7,9 @@
     KITEGATE_NEMO_CONFIG_ID           NeMo config to use; empty uses the server's default
     KITEGATE_CHILD_MODELS             comma-separated children's models: "alias" or "alias=upstream-model"
     KITEGATE_CHILD_USERS              comma-separated child account emails, for deny-by-default
+    KITEGATE_ADULT_USERS              comma-separated adult account emails: the only accounts
+                                      passthrough serves. Anyone else on another model is
+                                      refused, so an account nobody listed is treated as a child.
     KITEGATE_PACK                     default values pack (default: secular-neutral)
     KITEGATE_ALLOWED_PACKS            packs a client may pick per request with x-kitegate-pack
     KITEGATE_PACK_KEYS                extra public keys trusted to sign packs (see signing.py)
@@ -199,6 +202,7 @@ class GatewaySettings:
     upstream_kind: str = "openai"
     nemo_config_id: str = ""
     child_users: FrozenSet[str] = frozenset()
+    adult_users: FrozenSet[str] = frozenset()
     pack: str = "secular-neutral"
     allowed_packs: FrozenSet[str] = frozenset()
     inject_framing: bool = True
@@ -237,6 +241,10 @@ class GatewaySettings:
         if self.client_system not in CLIENT_SYSTEM_POLICIES:
             raise SettingsError(
                 f"KITEGATE_CLIENT_SYSTEM must be one of {list(CLIENT_SYSTEM_POLICIES)}")
+        both = {str(u).strip().lower() for u in self.child_users} & \
+            {str(u).strip().lower() for u in self.adult_users}
+        if both:
+            raise SettingsError(f"listed as both a child and an adult: {sorted(both)}")
         check_transport("KITEGATE_UPSTREAM_URL", self.upstream_url, self.allow_insecure_upstream)
         if self.passthrough:
             check_transport("KITEGATE_PASSTHROUGH_URL", self.passthrough_url or self.upstream_url,
@@ -313,6 +321,7 @@ class GatewaySettings:
             nemo_config_id=(e.get("KITEGATE_NEMO_CONFIG_ID") or "").strip(),
             child_models=_parse_models(e.get("KITEGATE_CHILD_MODELS") or ""),
             child_users=split_list(e.get("KITEGATE_CHILD_USERS")),
+            adult_users=split_list(e.get("KITEGATE_ADULT_USERS")),
             pack=(e.get("KITEGATE_PACK") or "secular-neutral").strip(),
             allowed_packs=frozenset(bundled_packs()) if allowed == "*" else split_list(allowed),
             inject_framing=(e.get("KITEGATE_INJECT_FRAMING") or "true").strip().lower() in _TRUE,

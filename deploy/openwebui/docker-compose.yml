@@ -53,6 +53,14 @@ services:
       KITEGATE_IMAGE_HOSTS: ${KITEGATE_IMAGE_HOSTS:-}
     volumes:
       - blocklog:/var/lib/kitegate
+    # Hardening. The image is distroless and runs as a non-root user; these stop
+    # it writing anywhere but the block-log volume, gaining privileges or
+    # acquiring Linux capabilities. It listens on 8080, above the privileged
+    # range, so it needs no capability.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.12.0@sha256:1565038903151ced924b5a3226f73f40f16963df4b910441f6391f10144afdaa

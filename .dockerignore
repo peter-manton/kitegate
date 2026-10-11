@@ -1,0 +1,15 @@
+# Build context for adapters/gateway/Dockerfile (the repo root). That Dockerfile
+# copies only pyproject.toml, README.md, LICENSE, requirements/gateway.txt and
+# src/, so everything else is kept out of the context. The context is sent to
+# the builder whether or not a COPY names a file, and deploy/openwebui/.env
+# holds real keys. An allowlist, so a new file is excluded until someone adds it.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!requirements/gateway.txt
+!src/
+
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info

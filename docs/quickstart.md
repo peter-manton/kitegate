@@ -91,10 +91,15 @@ Day to day, from `deploy/openwebui`:
 | add or remove a child | edit `KITEGATE_CHILD_USERS` in `.env`, then `docker compose up -d` |
 | add or remove an adult | edit `KITEGATE_ADULT_USERS` in `.env` (only listed adults can use a model other than the children's), then `docker compose up -d` |
 | change the pack or model | edit `.env`, then `docker compose up -d` |
-| read the block log | `docker compose exec kitegate cat /var/lib/kitegate/blocks.jsonl` |
+| read the block log | `docker compose exec kitegate /usr/bin/python3 -c "import sys; sys.stdout.write(open('/var/lib/kitegate/blocks.jsonl', encoding='utf-8').read())"` |
 | update | `git pull`, then `docker compose up -d --build` |
 | stop | `docker compose down` (keeps accounts, chats and the block log) |
 | delete everything | `docker compose down -v` |
+
+The gateway image is distroless: it has Python and the gateway and no shell, so
+`docker compose exec kitegate sh` does not work (the block-log command above runs
+Python directly). It runs as a non-root user, with a read-only filesystem and no
+Linux capabilities.
 
 The block log holds what children typed when they were blocked: treat it as
 sensitive. Set `KITEGATE_ALERT_WEBHOOK` in `.env` to an https URL to be sent

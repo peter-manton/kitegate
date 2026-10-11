@@ -53,17 +53,31 @@ jobs:
 
       - run: pip install "python-semantic-release==10.7.0" "build==1.6.1"
 
-      - name: Version, changelog, commit, tag and GitHub Release
+      # --no-vcs-release: version, changelog, build, commit and tag, but not the
+      # GitHub Release, which is made in the next step.
+      - name: Version, changelog, commit and tag
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          semantic-release -v version
+          semantic-release -v version --no-vcs-release
 
-      - name: Attach the package to the release
+      # This repository has immutable releases on: once a release is published
+      # its assets can no longer change. semantic-release publishes the release
+      # and only then uploads the package, which GitHub refuses with HTTP 422
+      # ("Cannot upload assets to an immutable release"). So the release is
+      # made the way immutable releases need: as a draft, with the package
+      # attached, and then published. The notes are this version's section of
+      # the changelog that the step above just wrote.
+      - name: Publish the GitHub Release with the package attached
         if: steps.release.outputs.released == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release -v publish --tag "${{ steps.release.outputs.tag }}"
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          notes="$(awk -v tag="$TAG" '/^## /{ if (found) exit; found = (index($0, "## " tag " ") == 1); next } found' CHANGELOG.md)"
+          if [ -z "$notes" ]; then notes="Release $TAG"; fi
+          gh release create "$TAG" build/pkg/* --draft --verify-tag --title "$TAG" --notes "$notes"
+          gh release edit "$TAG" --draft=false

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kitegate"
-version = "0.2.0"
+version = "0.3.1"
 description = "A safety core for children's AI services, with swappable, signed values packs."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -75,14 +75,11 @@ changelog_file = "CHANGELOG.md"
 type = "github"
 token = { env = "GH_TOKEN" }
 
-[tool.semantic_release.publish]
-# Attached to the GitHub Release: the package.
-# The package, attached to the GitHub Release by `semantic-release publish`.
-# The two Open WebUI files are not listed: `version` already attaches the
-# `assets` above when it creates the release, and uploading them again fails
-# with HTTP 422 because an asset of that name exists.
-dist_glob_patterns = ["build/pkg/*"]
-upload_to_vcs_release = true
+# There is no [tool.semantic_release.publish] section on purpose. The GitHub
+# Release is created by .github/workflows/release.yml with `gh`, as a draft
+# with build/pkg/* attached and then published, because this repository has
+# immutable releases on and semantic-release uploads assets only after it has
+# published the release, which GitHub refuses (HTTP 422).
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

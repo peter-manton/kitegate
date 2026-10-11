@@ -3,4 +3,4 @@ from .engine import PASS, PolicyEngine, Verdict
 from .packs import PackError, ValuesPack, bundled_packs, load_pack
 
 __all__ = ["PASS", "PackError", "PolicyEngine", "ValuesPack", "Verdict", "bundled_packs", "load_pack"]
-__version__ = "0.2.0"
+__version__ = "0.3.1"

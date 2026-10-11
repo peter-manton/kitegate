@@ -491,3 +491,32 @@ def test_lookups_past_the_queue_limit_are_told_the_library_is_busy():
 
     busy, free = asyncio.run(run())
     assert busy == BUSY_REPLY and "![" in free
+
+
+# -- one bad request must not switch the tool off for everyone ------------------------
+def test_a_request_the_model_rejects_for_another_reason_does_not_disable_the_tool(fake):
+    # Both the first try and the retry without the tool fail: the request was
+    # at fault (an out-of-range parameter), not the tool.
+    fake.replies = [httpx.Response(400, json={"error": "temperature out of range"}),
+                    httpx.Response(400, json={"error": "temperature out of range"}),
+                    reply("Tigers are big cats.")]
+    with make(fake) as c:
+        ask(c, temperature=99)
+        ask(c)                      # a normal request afterwards
+    assert fake.chat_calls[-1].get("tools"), "the tool is still offered to the next request"
+
+
+def test_a_model_that_refused_the_tool_is_tried_again_after_the_expiry(fake, monkeypatch):
+    import kitegate.gateway.app as gateway_app
+
+    now = [1000.0]
+    monkeypatch.setattr(gateway_app.time, "monotonic", lambda: now[0])
+    fake.replies = [httpx.Response(400, json={"error": "does not support tools"}),
+                    reply("Tigers are big cats."), reply("Lions."), reply("Bears.")]
+    with make(fake) as c:
+        ask(c)                                             # refused, then answered without the tool
+        ask(c)
+        assert "tools" not in fake.chat_calls[-1]          # remembered
+        now[0] += gateway_app.NO_TOOLS_TTL + 1
+        ask(c)
+    assert fake.chat_calls[-1].get("tools"), "offered again once the memory expired"

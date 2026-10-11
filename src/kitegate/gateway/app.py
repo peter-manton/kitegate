@@ -23,6 +23,7 @@ import asyncio
 import hmac
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
@@ -50,6 +51,8 @@ UNSUITABLE_PHOTO_REPLY = "No suitable photograph was found. Answer in words inst
 logger = logging.getLogger("kitegate.gateway")
 
 PACK_HEADER = "x-kitegate-pack"
+#: Seconds a model is left without the photo tool after it refused it.
+NO_TOOLS_TTL = 3600.0
 
 
 def _error(status: int, message: str, code: str) -> JSONResponse:
@@ -99,10 +102,22 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
     # The photo tool. Run here rather than in a front end, so no front end
     # needs anything installed and every one gets the same, screened tool.
     photo_tool = PhotoTool(settings.photo_providers, client) if settings.photos_enabled else None
-    # Upstream models that refused a request carrying the tool (no tool
-    # calling). They are asked without it from then on, so a model that
-    # cannot use tools still answers every question in words.
-    no_tools: set = set()
+    # Upstream models that refused a request carrying the tool and then
+    # answered the same request without it (no tool calling), mapped to when
+    # to try again. They are asked without it meanwhile, so a model that
+    # cannot use tools still answers every question in words, and a model that
+    # is swapped for one that can is noticed.
+    no_tools: Dict[str, float] = {}
+
+    def tools_refused(model: str) -> bool:
+        until = no_tools.get(model)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            del no_tools[model]
+            return False
+        return True
+
     if photo_tool is not None:
         logger.info("kitegate: photo tool on for children's models, providers=%s",
                     ",".join(settings.photo_providers))
@@ -387,21 +402,27 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
 
         upstream_model = outbound["model"]
         use_tool = (photo_tool is not None and payloads.offers_own_tool(body, TOOL_NAME)
-                    and upstream_model not in no_tools)
+                    and not tools_refused(upstream_model))
         client_tools = set(payloads.tool_names(body))
         if use_tool:
             outbound = payloads.with_tool(outbound, photo_tool.spec)
         r = await post_upstream(outbound)
         if use_tool and r is not None and r.status_code in (400, 422):
             # Most likely a model without tool calling. Answer in words
-            # rather than failing every question, and stop offering it.
-            logger.warning("kitegate: upstream model %s refused the photo tool (HTTP %s), so it "
-                           "answers without pictures from now on. Use a model with tool calling, "
-                           "or set KITEGATE_PHOTOS=off", upstream_model, r.status_code)
-            no_tools.add(upstream_model)
+            # rather than failing every question.
             use_tool = False
             outbound = payloads.without_own_tool(outbound, TOOL_NAME)
             r = await post_upstream(outbound)
+            if r is not None and r.status_code == 200:
+                # Only now is it the tool that was refused. If the retry
+                # fails too, the request itself was bad (a client sent an
+                # out-of-range parameter, say), and one such request must not
+                # switch pictures off for everyone else.
+                no_tools[upstream_model] = time.monotonic() + NO_TOOLS_TTL
+                logger.warning("kitegate: upstream model %s refused the photo tool, so it answers "
+                               "without pictures for the next %d minutes. Use a model with tool "
+                               "calling, or set KITEGATE_PHOTOS=off", upstream_model,
+                               NO_TOOLS_TTL // 60)
         failure = upstream_failure(r)
         if failure is not None:
             return failure

@@ -302,11 +302,28 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             data = {**data, "usage": usage}
         return data, None, None
 
-    @app.post("/v1/chat/completions")
-    async def chat(request: Request) -> Response:
-        if not authorised(request):
-            return _error(401, "Invalid or missing API key.", "unauthorised")
-        raw = await request.body()
+    async def read_body(request: Request) -> Optional[bytes]:
+        """The request body, or None if it is larger than the limit.
+
+        Counted as it arrives as well as from Content-Length, so a chunked
+        upload with no length cannot make the gateway hold more than the limit.
+        """
+        limit = settings.max_body_bytes
+        declared = request.headers.get("content-length") or ""
+        if declared.isdigit() and int(declared) > limit:
+            return None
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                return None
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    async def handle_chat(request: Request) -> Response:
+        raw = await read_body(request)
+        if raw is None:
+            return _error(413, "The request is too large.", "request_too_large")
         try:
             body = json.loads(raw)
         except ValueError:
@@ -485,6 +502,28 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             return blocked(Verdict(False, "error", "error", ERROR_REPLY), "error", alias, stream,
                            include_usage, email, asked)
         return respond(clean, stream, include_usage)
+
+    in_flight = 0
+
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request) -> Response:
+        nonlocal in_flight
+        if not authorised(request):
+            return _error(401, "Invalid or missing API key.", "unauthorised")
+        # Each request holds a whole reply in memory while it is screened, and
+        # a model call open for as long as the model takes, so the number in
+        # progress is capped. Over the cap is a quick, honest "busy", not a
+        # queue that grows until the gateway falls over.
+        if in_flight >= settings.max_concurrency:
+            logger.warning("kitegate: %d requests in progress, refusing another", in_flight)
+            response = _error(429, "The service is busy. Try again in a moment.", "busy")
+            response.headers["retry-after"] = "2"
+            return response
+        in_flight += 1
+        try:
+            return await handle_chat(request)
+        finally:
+            in_flight -= 1
 
     return app
 

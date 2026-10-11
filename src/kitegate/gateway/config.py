@@ -30,6 +30,10 @@
     KITEGATE_BLOCK_LOG                optional JSONL path; blocks are appended for adult review
     KITEGATE_ALERT_WEBHOOK            optional URL; distress events are POSTed to it
     KITEGATE_UPSTREAM_TIMEOUT         seconds (default 120)
+    KITEGATE_MAX_BODY_BYTES           largest request body accepted (default 4194304, 4 MiB);
+                                      a bigger one gets HTTP 413
+    KITEGATE_MAX_CONCURRENCY          chat requests in progress at once (default 64); past it
+                                      a request gets HTTP 429 with Retry-After
     KITEGATE_ALLOW_INSECURE_UPSTREAM  "true": allow plain http:// to non-local hosts (not advised)
 
 Pictures (see images.py for what is and is not covered):
@@ -184,6 +188,16 @@ def _parse_thresholds(value: str) -> Dict[str, float]:
     return out
 
 
+def _int(env: Mapping[str, str], name: str, default: int) -> int:
+    value = (env.get(name) or "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        raise SettingsError(f"{name} must be a whole number, got {value!r}") from None
+
+
 def _parse_models(value: str) -> Dict[str, str]:
     models: Dict[str, str] = {}
     for item in (value or "").split(","):
@@ -217,6 +231,8 @@ class GatewaySettings:
     alert_webhook: str = ""
     timeout: float = 120.0
     allow_insecure_upstream: bool = False
+    max_body_bytes: int = 4 * 1024 * 1024
+    max_concurrency: int = 64
     # Pictures: the conservative values, not the documented defaults. See the
     # note at the end of the module docstring; from_env resolves what an unset
     # environment variable means.
@@ -245,6 +261,10 @@ class GatewaySettings:
         if self.client_system not in CLIENT_SYSTEM_POLICIES:
             raise SettingsError(
                 f"KITEGATE_CLIENT_SYSTEM must be one of {list(CLIENT_SYSTEM_POLICIES)}")
+        if self.max_body_bytes < 1024:
+            raise SettingsError("KITEGATE_MAX_BODY_BYTES must be at least 1024")
+        if self.max_concurrency < 1:
+            raise SettingsError("KITEGATE_MAX_CONCURRENCY must be at least 1")
         both = {str(u).strip().lower() for u in self.child_users} & \
             {str(u).strip().lower() for u in self.adult_users}
         if both:
@@ -337,6 +357,8 @@ class GatewaySettings:
             alert_webhook=e.get("KITEGATE_ALERT_WEBHOOK") or "",
             timeout=float(e.get("KITEGATE_UPSTREAM_TIMEOUT") or 120),
             allow_insecure_upstream=(e.get("KITEGATE_ALLOW_INSECURE_UPSTREAM") or "").strip().lower() in _TRUE,
+            max_body_bytes=_int(e, "KITEGATE_MAX_BODY_BYTES", 4 * 1024 * 1024),
+            max_concurrency=_int(e, "KITEGATE_MAX_CONCURRENCY", 64),
             image_policy=policy,
             image_scan_url=(e.get("KITEGATE_IMAGE_SCAN_URL") or DEFAULT_SCAN_URL).strip().rstrip("/"),
             image_scan_api_key=scan_key,

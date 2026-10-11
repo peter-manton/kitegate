@@ -618,3 +618,79 @@ def test_a_model_name_with_spaces_around_it_is_the_childrens_model(up):
     with make(up) as c:
         body = ask(c, "tigers", model=" kids-encyclopedia ").json()
     assert body["kitegate"]["allowed"] and body["choices"][0]["message"]["content"]
+
+
+# -- limits ---------------------------------------------------------------------------
+def test_a_body_over_the_limit_is_refused_before_it_is_read_into_the_model_path(up):
+    with make(up, max_body_bytes=2048) as c:
+        r = c.post("/v1/chat/completions", headers=CHILD,
+                   json={"model": "kids-encyclopedia", "messages": [{"role": "user", "content": "x" * 5000}]})
+    assert r.status_code == 413 and r.json()["error"]["code"] == "request_too_large"
+    assert not up.chat_calls
+
+
+def test_a_chunked_body_over_the_limit_is_refused_too(up):
+    def chunks():  # no Content-Length: the size is only known by counting
+        yield b'{"model": "kids-encyclopedia", "messages": [{"role": "user", "content": "'
+        yield b"x" * 5000
+        yield b'"}]}'
+
+    with make(up, max_body_bytes=2048) as c:
+        r = c.post("/v1/chat/completions", headers={**CHILD, "content-type": "application/json"},
+                   content=chunks())
+    assert r.status_code == 413
+    assert not up.chat_calls
+
+
+def test_a_body_under_the_limit_is_answered(up):
+    up.replies = [completion("Tigers.")]
+    with make(up, max_body_bytes=2048) as c:
+        assert ask(c, "tigers").status_code == 200
+
+
+def test_requests_past_the_concurrency_cap_get_a_429_with_retry_after():
+    import asyncio
+
+    gate = asyncio.Event()
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await gate.wait()      # the model is slow: the first request stays in progress
+        return httpx.Response(200, json=completion("ok"))
+
+    app = create_app(settings(max_concurrency=1), transport=httpx.MockTransport(slow))
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as client:
+            body = {"model": "kids-encyclopedia", "messages": [{"role": "user", "content": "hi"}]}
+            first = asyncio.ensure_future(client.post("/v1/chat/completions", headers=CHILD, json=body))
+            await asyncio.sleep(0.2)                    # let it reach the model
+            try:
+                # Without a cap this would wait on the slow model too, so it
+                # is bounded: the test fails instead of hanging.
+                second = await asyncio.wait_for(
+                    client.post("/v1/chat/completions", headers=CHILD, json=body), timeout=3)
+            finally:
+                gate.set()
+            return second, await first
+
+    second, first = asyncio.run(run())
+    assert second.status_code == 429 and second.headers["retry-after"] == "2"
+    assert second.json()["error"]["code"] == "busy"
+    assert first.status_code == 200
+
+
+@pytest.mark.parametrize("over", [{"max_body_bytes": 10}, {"max_concurrency": 0}])
+def test_nonsense_limits_stop_the_gateway(over):
+    with pytest.raises(SettingsError):
+        settings(**over)
+
+
+def test_limits_come_from_the_environment():
+    env = {"KITEGATE_API_KEY": KEY, "KITEGATE_UPSTREAM_URL": "http://upstream/v1",
+           "KITEGATE_CHILD_MODELS": "kids-encyclopedia", "KITEGATE_MAX_BODY_BYTES": "8192",
+           "KITEGATE_MAX_CONCURRENCY": "5"}
+    s = GatewaySettings.from_env(env)
+    assert (s.max_body_bytes, s.max_concurrency) == (8192, 5)
+    with pytest.raises(SettingsError, match="whole number"):
+        GatewaySettings.from_env({**env, "KITEGATE_MAX_CONCURRENCY": "many"})

@@ -33,8 +33,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .. import PolicyEngine, load_pack
 from ..blocklog import BlockLog
 from ..engine import PASS, Verdict
-from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, WRONG_MODEL_REPLY, Scope, content_text,
-                        email_from_headers, tool_call_arguments, tool_texts)
+from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, UNREADABLE_REPLY, WRONG_MODEL_REPLY, Scope,
+                        content_text, email_from_headers, tool_call_arguments, tool_texts,
+                        unreadable_parts)
 from ..photos import image_hosts_for
 from . import payloads
 from .config import GatewaySettings
@@ -317,6 +318,8 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
         messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
         asked = payloads.newest_user_text(messages)
         uploaded = payloads.newest_user_images(messages)
+        newest = next((m for m in reversed(messages) if m.get("role") == "user"), {})
+        unreadable = unreadable_parts(newest.get("content"))
 
         try:
             # Pictures the CHILD sent. Refused by default, and refused before
@@ -328,6 +331,11 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             # nothing screened at all. A question photographed or screenshotted
             # into an image therefore bypassed every text tier, which is the
             # ordinary way a filter like this gets walked around.
+            # Audio, files and other parts the screen cannot read are refused
+            # for the same reason: they would reach the model unscreened.
+            if unreadable:
+                verdict = Verdict(False, "policy", "content.unreadable", UNREADABLE_REPLY)
+                return blocked(verdict, "request", alias, stream, include_usage, email, asked)
             if uploaded and not settings.allow_uploads:
                 verdict = Verdict(False, "image", "image.upload_refused", NO_UPLOADS_REPLY)
                 return blocked(verdict, "request", alias, stream, include_usage, email, asked)
@@ -338,6 +346,8 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             def history_rule(m: dict) -> Optional[str]:
                 # The same tests the turn faced when it was the newest, so a
                 # turn refused then is not answered now.
+                if unreadable_parts(m.get("content")):
+                    return "content.unreadable"
                 if payloads.newest_user_images([m]) and not settings.allow_uploads:
                     return "image.upload_refused"
                 text = content_text(m.get("content"))

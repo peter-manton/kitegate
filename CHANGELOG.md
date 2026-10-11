@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.3.1 (2026-10-11)
+
+### Bug Fixes
+
+- **deploy**: Turn off Open WebUI built-in tools
+  ([#12](https://github.com/peter-manton/kitegate/pull/12),
+  [`c9282ea`](https://github.com/peter-manton/kitegate/commit/c9282ea307cbd1e96336fcf26b9461dbda60bc64))
+
+
 ## v0.3.0 (2026-10-11)
 
 ### Bug Fixes

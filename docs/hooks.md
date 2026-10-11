@@ -31,7 +31,6 @@ Before each commit:
 | check-yaml, check-toml, check-json | A malformed pack or `pyproject.toml` fails the suite anyway, slower |
 | check-executables-have-shebangs | A script committed executable but unrunnable |
 | end-of-file-fixer, trailing-whitespace | Rewrite the file; re-stage and commit again |
-| owui-filter-built, owui-photo-built | `dist/` matches the package and adapter it is built from |
 
 On the commit message: `conventional-pre-commit`, which checks that the
 message is a Conventional Commit with one of the scopes in `CONTRIBUTING.md`.
@@ -49,10 +48,9 @@ pre-commit run --all-files
 
 ### Files the hooks will not rewrite
 
-`end-of-file-fixer` and `trailing-whitespace` skip `src/kitegate/packs/` and
-`dist/`. A pack is signed, so a stripped trailing space invalidates the
-signature for no gain, and `dist/` is generated, so the fix belongs in the
-source followed by a rebuild. There is no `mixed-line-ending` hook either:
+`end-of-file-fixer` and `trailing-whitespace` skip `src/kitegate/packs/`. A
+pack is signed, so a stripped trailing space invalidates the signature for no
+gain. There is no `mixed-line-ending` hook either:
 `.gitattributes` already pins the repository to LF, so on a Windows checkout
 it rewrites files for a change git cannot even see.
 
@@ -86,15 +84,11 @@ realistic-looking fake credential in the first place.
 **bandit.** Only if the finding is genuinely not a problem, and say why:
 
 ```python
-except Exception:  # nosec B110 - older Open WebUI has no Config: fall through
+except Exception:  # nosec B110 - <why swallowing this is safe here>
 ```
 
-Two such notes exist today, both load-bearing rather than decorative: the
-version fallback above, and the `urlopen` in `deploy/openwebui/provision.py`,
-whose scheme is checked once where `WEBUI_URL` is read because bandit cannot
-see that from the call site. `tests/` is not scanned at all, since its
-asserts are the point of the file rather than a finding, and nor is `dist/`,
-which is generated from `src/`, which is.
+None exist today. `tests/` is not scanned at all, since its asserts are the
+point of the file rather than a finding.
 
 ## Skipping, and why CI does not care if you do
 

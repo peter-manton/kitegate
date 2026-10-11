@@ -25,11 +25,7 @@ classifiers = [
 [project.optional-dependencies]
 # The OpenAI-compatible gateway. The core above needs none of this.
 gateway = ["fastapi==0.143.0", "httpx==0.28.1", "uvicorn==0.54.0"]
-# pydantic and requests are what the Open WebUI adapters import (valves and
-# the photo tool's HTTP), so the suite can exercise them rather than only
-# parsing the built file.
-dev = ["pytest==9.1.1", "pydantic==2.14.0", "requests==2.34.2", "fastapi==0.143.0",
-       "httpx==0.28.1", "uvicorn==0.54.0"]
+dev = ["pytest==9.1.1", "fastapi==0.143.0", "httpx==0.28.1", "uvicorn==0.54.0"]
 
 [project.scripts]
 kitegate = "kitegate.gateway:main"
@@ -43,9 +39,8 @@ kitegate = ["packs/*.yaml", "packs/*.yaml.sig"]
 
 [tool.bandit]
 # Read by the bandit pre-commit hook, and by `bandit -c pyproject.toml -r .`
-# run by hand. tests/ asserts are the point of the file rather than a finding,
-# and dist/ is generated from src/, which is scanned.
-exclude_dirs = ["tests", "dist", "build", ".venv", ".git"]
+# run by hand. tests/ asserts are the point of the file rather than a finding.
+exclude_dirs = ["tests", "build", ".venv", ".git"]
 
 [tool.semantic_release]
 # Releases are cut by .github/workflows/release.yml on every push to main,
@@ -60,20 +55,11 @@ major_on_zero = false
 commit_message = "chore(release): v{version}"
 commit_author = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
 version_toml = ["pyproject.toml:project.version"]
-# Every place the version is written out. The two Open WebUI adapters carry it
-# in their frontmatter, which Open WebUI shows in its Functions/Tools list.
-version_variables = [
-    "src/kitegate/__init__.py:__version__",
-    "adapters/openwebui/kitegate_filter.py:version",
-    "adapters/openwebui/kitegate_photo.py:version",
-]
-# Runs after the version is stamped and before the release commit. The pasted
-# Open WebUI files in dist/ are built from the adapters above, so they are
-# rebuilt to carry the new version (CI's --check fails otherwise) and added to
-# the commit via `assets`. The sdist and wheel go to build/pkg, which is
-# ignored, so that only the two tracked files in dist/ are ever committed.
-build_command = "python tools/build_owui_filter.py && python tools/build_owui_photo.py && python -m build --outdir build/pkg"
-assets = ["dist/kitegate_openwebui_filter.py", "dist/kitegate_openwebui_photo.py"]
+# Every place the version is written out.
+version_variables = ["src/kitegate/__init__.py:__version__"]
+# Runs after the version is stamped and before the release commit. The sdist
+# and wheel go to build/pkg, which is ignored, so nothing built is committed.
+build_command = "python -m build --outdir build/pkg"
 
 [tool.semantic_release.branches.main]
 match = "main"
@@ -90,9 +76,8 @@ type = "github"
 token = { env = "GH_TOKEN" }
 
 [tool.semantic_release.publish]
-# Attached to the GitHub Release: the package, and the two files people paste
-# into Open WebUI.
-dist_glob_patterns = ["build/pkg/*", "dist/kitegate_openwebui_*.py"]
+# Attached to the GitHub Release: the package.
+dist_glob_patterns = ["build/pkg/*"]
 upload_to_vcs_release = true
 
 [tool.pytest.ini_options]

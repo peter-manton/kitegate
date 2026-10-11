@@ -13,8 +13,8 @@ any public or school deployment.
   family deployment that is usually the account holder. In a school it is
   the Designated Safeguarding Lead, never the parent first. A hosted service
   needs a published crisis protocol; the DfE standards expect one.
-- Only gateway deployments can alert anyone (the gateway's block log and
-  alert webhook). The single-file Open WebUI filter cannot.
+- The gateway alerts through its block log and alert webhook. If you call the
+  library directly, alerting is your service's job.
 
 ## Filtering expectations
 
@@ -36,6 +36,14 @@ are the procurement checklist. Points that affect configuration:
   a friend or a romantic interest, and screens the reply for it on the way out
   (tier 4, `persona.*`). That covers the companion-style interaction the
   standards are aimed at; the `uk-school` pack goes further on house style.
+- **One baseline instruction in every pack.** The core framing sent to the
+  model is the same whichever pack is chosen: no persona, no adult or
+  dangerous material, no asking for personal details, a trusted adult and
+  Childline when a child seems distressed, and web text treated as
+  information rather than instructions. A front end's own system prompt is
+  folded in below it, or dropped (`KITEGATE_CLIENT_SYSTEM`), so it cannot be
+  overridden by configuration in the front end. It is guidance to the model;
+  the screening tiers are the control.
 - **No singling out of protected characteristics.** A tool that redirects
   one protected characteristic will fail a school's equality review. The
   `uk-school` pack redirects party-political opinion, romance, puberty and

@@ -12,8 +12,15 @@
     KITEGATE_PACK_KEYS                extra public keys trusted to sign packs (see signing.py)
     KITEGATE_REQUIRE_SIGNED_PACKS     "true": refuse any pack without a trusted signature
     KITEGATE_INJECT_FRAMING           "true" (default): add the pack's framing to the system message.
-                                      The core framing (core.py: the tool is not a person) is sent
-                                      either way and cannot be switched off here.
+                                      The core framing (core.py CORE_FRAMING) is sent either way
+                                      and cannot be switched off here.
+    KITEGATE_CLIENT_SYSTEM            what happens to a client's own system (or developer)
+                                      messages on a children's model. The gateway's system
+                                      message is always the only one, and first:
+                                      "fold" (default): their text goes into it, after the core
+                                             and pack framing, ranked below them
+                                      "drop": they are removed
+                                      Adult passthrough models are not touched either way.
     KITEGATE_PASSTHROUGH              "true": forward other models unscreened (adults only)
     KITEGATE_PASSTHROUGH_URL          where adult traffic goes (default: the upstream URL)
     KITEGATE_PASSTHROUGH_API_KEY      key for that (default: the upstream key)
@@ -47,6 +54,13 @@ Pictures (see images.py for what is and is not covered):
     KITEGATE_IMAGE_UPLOADS            "allow": let children send pictures to the model.
                                       Off by default and NOT scanned — a child's own
                                       photo must not be sent to a third party.
+    KITEGATE_PHOTOS                   curated photo providers for the gateway's own
+                                      find_photo tool, tried in order (photos.py):
+                                      "wikimedia" (default), "nasa" (space only).
+                                      "off" removes the tool. It is offered to the model
+                                      only when pictures can actually be shown, so with
+                                      KITEGATE_IMAGE_POLICY=block it is off whatever
+                                      this says. No front end needs a tool installed.
 
 The picture defaults are resolved in from_env, not in the field defaults: the
 dataclass is a plain value object and says only what it was given, so a test
@@ -70,13 +84,14 @@ from __future__ import annotations
 import ipaddress
 import os
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Mapping, Optional
+from typing import Dict, FrozenSet, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ..images import IMAGE_THRESHOLDS
 from ..messages import split_list
 from ..packs import bundled_packs
-from ..photos import PROVIDERS, image_hosts_for
+from ..photos import DEFAULT_PROVIDERS, PROVIDERS, get_providers, image_hosts_for
+from .payloads import CLIENT_SYSTEM_POLICIES
 
 _TRUE = {"1", "true", "yes", "on"}
 MIN_KEY_LENGTH = 16
@@ -101,6 +116,7 @@ DEFAULT_SCAN_MODEL = "omni-moderation-latest"
 # new provider must not silently drop its pictures.
 TRUSTED_IMAGE_HOSTS = frozenset(image_hosts_for(sorted(PROVIDERS)))
 ANY_IMAGE_HOST = "*"
+PHOTOS_OFF = {"off", "none", "false", "no", "0"}
 
 
 class SettingsError(ValueError):
@@ -186,6 +202,7 @@ class GatewaySettings:
     pack: str = "secular-neutral"
     allowed_packs: FrozenSet[str] = frozenset()
     inject_framing: bool = True
+    client_system: str = "fold"
     passthrough: bool = False
     passthrough_url: str = ""
     passthrough_api_key: str = ""
@@ -204,6 +221,9 @@ class GatewaySettings:
     image_hosts: FrozenSet[str] = frozenset()
     image_thresholds: Optional[Dict[str, float]] = None
     allow_uploads: bool = False
+    # Empty, like the picture fields above: a hand-built settings object
+    # offers no tool unless it asks for one.
+    photo_providers: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.api_key or "") < MIN_KEY_LENGTH:
@@ -214,6 +234,9 @@ class GatewaySettings:
             raise SettingsError("KITEGATE_CHILD_MODELS must name at least one children's model")
         if self.upstream_kind not in ("openai", "nemo"):
             raise SettingsError("KITEGATE_UPSTREAM_KIND must be 'openai' or 'nemo'")
+        if self.client_system not in CLIENT_SYSTEM_POLICIES:
+            raise SettingsError(
+                f"KITEGATE_CLIENT_SYSTEM must be one of {list(CLIENT_SYSTEM_POLICIES)}")
         check_transport("KITEGATE_UPSTREAM_URL", self.upstream_url, self.allow_insecure_upstream)
         if self.passthrough:
             check_transport("KITEGATE_PASSTHROUGH_URL", self.passthrough_url or self.upstream_url,
@@ -233,6 +256,22 @@ class GatewaySettings:
                     "Use KITEGATE_IMAGE_POLICY=block to show no pictures instead, or unset "
                     "KITEGATE_IMAGE_POLICY to let it fall back to that on its own.")
             check_transport("KITEGATE_IMAGE_SCAN_URL", self.image_scan_url, self.allow_insecure_upstream)
+        if self.photo_providers:
+            # A typo must stop the gateway, not read as "pictures are off".
+            try:
+                get_providers(self.photo_providers)
+            except ValueError as exc:
+                raise SettingsError(f"KITEGATE_PHOTOS: {exc}") from None
+
+    @property
+    def photos_enabled(self) -> bool:
+        """Whether the gateway offers its photo tool to children's models.
+
+        Not when pictures are blocked: every photograph would be removed on
+        the way back, so the lookup would cost a model round trip and a
+        request to Wikipedia for nothing a child could see.
+        """
+        return bool(self.photo_providers) and self.image_policy != "block"
 
     @property
     def packs(self) -> FrozenSet[str]:
@@ -262,6 +301,10 @@ class GatewaySettings:
         image_hosts = (frozenset() if hosts == ANY_IMAGE_HOST
                        else split_list(hosts) if hosts
                        else TRUSTED_IMAGE_HOSTS)
+        photos = (e.get("KITEGATE_PHOTOS") or "").strip().lower()
+        photo_providers = (() if photos in PHOTOS_OFF
+                           else tuple(n.strip() for n in photos.split(",") if n.strip()) if photos
+                           else DEFAULT_PROVIDERS)
         return cls(
             api_key=e.get("KITEGATE_API_KEY") or "",
             upstream_url=upstream_url,
@@ -273,6 +316,7 @@ class GatewaySettings:
             pack=(e.get("KITEGATE_PACK") or "secular-neutral").strip(),
             allowed_packs=frozenset(bundled_packs()) if allowed == "*" else split_list(allowed),
             inject_framing=(e.get("KITEGATE_INJECT_FRAMING") or "true").strip().lower() in _TRUE,
+            client_system=(e.get("KITEGATE_CLIENT_SYSTEM") or "fold").strip().lower(),
             passthrough=(e.get("KITEGATE_PASSTHROUGH") or "").strip().lower() in _TRUE,
             passthrough_url=(e.get("KITEGATE_PASSTHROUGH_URL") or upstream_url).rstrip("/"),
             passthrough_api_key=e.get("KITEGATE_PASSTHROUGH_API_KEY") or upstream_key,
@@ -288,4 +332,5 @@ class GatewaySettings:
             image_hosts=image_hosts,
             image_thresholds=_parse_thresholds(e.get("KITEGATE_IMAGE_THRESHOLDS") or ""),
             allow_uploads=(e.get("KITEGATE_IMAGE_UPLOADS") or "").strip().lower() in ("allow", *_TRUE),
+            photo_providers=photo_providers,
         )

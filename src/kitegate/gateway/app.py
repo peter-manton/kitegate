@@ -6,7 +6,9 @@ speaks the OpenAI chat API) points here. For a children's model it:
   1. refuses a known child on any other model (deny-by-default by identity)
   2. screens the child's newest message, then tool results and earlier
      model turns in the history
-  3. asks upstream (a model, or NeMo Guardrails) for the WHOLE reply
+  3. asks upstream (a model, or NeMo Guardrails) for the WHOLE reply, offering
+     the gateway's own find_photo tool and running it when the model asks
+     (phototool.py), so a front end needs no tool installed
   4. translates a NeMo rail block into the pack's wording
   5. screens the reply and its tool-call arguments
   6. returns it, replaying it as a stream if the client asked for one
@@ -22,7 +24,7 @@ import hmac
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, Request
@@ -32,10 +34,17 @@ from .. import PolicyEngine, load_pack
 from ..blocklog import BlockLog
 from ..engine import PASS, Verdict
 from ..messages import (ERROR_REPLY, NO_UPLOADS_REPLY, WRONG_MODEL_REPLY, Scope, email_from_headers,
-                        tool_texts)
+                        tool_call_arguments, tool_texts)
+from ..photos import image_hosts_for
 from . import payloads
 from .config import GatewaySettings
 from .imagescan import scanner_for
+from .phototool import MAX_ROUNDS, TOOL_NAME, PhotoTool
+
+# What the model is told when a photo caption fails the text screen. The
+# question is not blocked for it: the child asked about something fine, and
+# the picture's own text is what fell short.
+UNSUITABLE_PHOTO_REPLY = "No suitable photograph was found. Answer in words instead."
 
 logger = logging.getLogger("kitegate.gateway")
 
@@ -71,16 +80,36 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
                        "a passing picture from an uncurated source is still shown")
     if settings.image_policy == "block" and not settings.image_scan_api_key:
         # Not a warning: removing pictures is the safe outcome. But it is the
-        # one that looks like a bug to the adult who installed the photo tool
-        # and sees no photographs, so the reason and the fix go in the log.
+        # one that looks like a bug to an adult expecting photographs, so the
+        # reason and the fix go in the log.
         logger.info("kitegate: no KITEGATE_IMAGE_SCAN_API_KEY, so pictures are removed from "
                     "replies. Set one to show pictures that pass a moderation check")
     if settings.allow_uploads:
         logger.warning("kitegate: KITEGATE_IMAGE_UPLOADS is on. Children's own pictures are forwarded "
                        "to the model and are NOT screened")
 
+    # The photo tool. Run here rather than in a front end, so no front end
+    # needs anything installed and every one gets the same, screened tool.
+    photo_tool = PhotoTool(settings.photo_providers, client) if settings.photos_enabled else None
+    # Upstream models that refused a request carrying the tool (no tool
+    # calling). They are asked without it from then on, so a model that
+    # cannot use tools still answers every question in words.
+    no_tools: set = set()
+    if photo_tool is not None:
+        logger.info("kitegate: photo tool on for children's models, providers=%s",
+                    ",".join(settings.photo_providers))
+        if settings.image_policy == "scan" and settings.image_hosts:
+            missing = [h for h in image_hosts_for(settings.photo_providers)
+                       if h not in settings.image_hosts]
+            if missing:
+                logger.warning("kitegate: KITEGATE_IMAGE_HOSTS leaves out %s, so photographs from "
+                               "the photo tool there are always removed", ",".join(missing))
+    elif settings.photo_providers:
+        logger.info("kitegate: photo tool off, because pictures are removed from replies")
+
     app = FastAPI(title="kitegate", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
+    app.state.photo_tool = photo_tool
     app.router.add_event_handler("shutdown", client.aclose)
 
     def authorised(request: Request) -> bool:
@@ -160,6 +189,96 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
                                      background=_Close(r))
         return Response(r.content, status_code=r.status_code, media_type=media)
 
+    async def post_upstream(outbound: dict) -> Optional[httpx.Response]:
+        """One children's-model call. None if the upstream could not be reached."""
+        try:
+            return await client.post(f"{settings.upstream_url}/chat/completions", json=outbound,
+                                     headers=upstream_headers(settings.upstream_api_key))
+        except httpx.HTTPError:
+            logger.exception("kitegate: upstream failed")
+            return None
+
+    def upstream_failure(r: Optional[httpx.Response]) -> Optional[Response]:
+        if r is None:
+            return _error(502, "The model is not reachable right now.", "upstream_unavailable")
+        if r.status_code != 200:
+            # The upstream body is not passed on: it may quote the request.
+            logger.error("kitegate: upstream returned HTTP %s", r.status_code)
+            return _error(502, "The model could not answer right now.", "upstream_error")
+        return None
+
+    async def photo_rounds(outbound: dict, data: dict, engine: PolicyEngine, client_tools: set
+                           ) -> Tuple[Optional[dict], Optional[Verdict], Optional[Response]]:
+        """Run the model's find_photo calls until it answers in words.
+
+        Returns (reply, None, None), or a block verdict for the caller to
+        answer with, or an upstream error response. Nothing from an
+        intermediate turn reaches the child: only the final reply does, and
+        it is screened like any other.
+        """
+        usage = payloads.add_usage(None, data)
+        for round_no in range(MAX_ROUNDS + 1):
+            stray = payloads.stray_tool_call(data)
+            if stray is not None:
+                name, args = stray
+                if name == TOOL_NAME and round_no < MAX_ROUNDS:
+                    # The right call, written in the wrong place. Run it.
+                    data = payloads.as_tool_call(data, name, args)
+                else:
+                    # A made-up tool, or one call too many, written as the
+                    # answer: the tool being on offer is what confused the
+                    # model, so ask once more with no tools at all.
+                    logger.info("kitegate: model answered with a bare tool call (%s); "
+                                "asking again without tools", name)
+                    r = await post_upstream(payloads.in_words(outbound))
+                    failure = upstream_failure(r)
+                    if failure is not None:
+                        return None, None, failure
+                    data = r.json()
+                    usage = payloads.add_usage(usage, data)
+                    if payloads.stray_tool_call(data) is not None:
+                        return None, Verdict(False, "error", "photo.unfinished", ERROR_REPLY), None
+                    break
+            calls = payloads.own_tool_calls(data, TOOL_NAME)
+            if not calls:
+                break
+            # The arguments are the model's output, so they get the response
+            # screen before any of them leaves the gateway, exactly as they
+            # would on the way to a client that ran the tool itself.
+            verdict = engine.screen_response(tool_call_arguments(calls))
+            if not verdict.allowed:
+                return None, verdict, None
+            if any((c.get("function") or {}).get("name") in client_tools for c in calls):
+                # The model also called one of the client's tools, which only
+                # the client can run. Hand the turn back with the gateway's own
+                # calls taken out; the tool is offered again on the next turn.
+                data = payloads.drop_tool_calls(data, TOOL_NAME)
+                break
+            if round_no == MAX_ROUNDS:
+                # Told to answer in words (tool_choice none) and asked anyway.
+                data = payloads.drop_tool_calls(data, TOOL_NAME)
+                if not payloads.response_texts(data):
+                    return None, Verdict(False, "error", "photo.unfinished", ERROR_REPLY), None
+                break
+            results = await photo_tool.answer(calls)
+            for result in results:
+                # A caption is text the model may repeat to the child. One
+                # that fails becomes "nothing suitable" rather than a block.
+                if not engine.screen_response([result["content"]]).allowed:
+                    result["content"] = UNSUITABLE_PHOTO_REPLY
+            outbound = payloads.after_tool_round(outbound, data, results)
+            if round_no + 1 == MAX_ROUNDS:
+                outbound["tool_choice"] = "none"
+            r = await post_upstream(outbound)
+            failure = upstream_failure(r)
+            if failure is not None:
+                return None, None, failure
+            data = r.json()
+            usage = payloads.add_usage(usage, data)
+        if usage is not None:
+            data = {**data, "usage": usage}
+        return data, None, None
+
     @app.post("/v1/chat/completions")
     async def chat(request: Request) -> Response:
         if not authorised(request):
@@ -221,25 +340,43 @@ def create_app(settings: GatewaySettings, transport: Optional[httpx.AsyncBaseTra
             outbound = payloads.upstream_body(
                 body, upstream_model=settings.child_models[alias.lower()], engine=engine,
                 inject_framing=settings.inject_framing, kind=settings.upstream_kind,
-                nemo_config_id=settings.nemo_config_id)
+                nemo_config_id=settings.nemo_config_id, client_system=settings.client_system)
         except Exception:  # fail closed
             logger.exception("kitegate screening failed; blocking")
             return blocked(Verdict(False, "error", "error", ERROR_REPLY), "error", alias, stream,
                            include_usage, email, asked)
 
-        try:
-            r = await client.post(f"{settings.upstream_url}/chat/completions", json=outbound,
-                                  headers=upstream_headers(settings.upstream_api_key))
-        except httpx.HTTPError:
-            logger.exception("kitegate: upstream failed")
-            return _error(502, "The model is not reachable right now.", "upstream_unavailable")
-        if r.status_code != 200:
-            # The upstream body is not passed on: it may quote the request.
-            logger.error("kitegate: upstream returned HTTP %s", r.status_code)
-            return _error(502, "The model could not answer right now.", "upstream_error")
+        upstream_model = outbound["model"]
+        use_tool = (photo_tool is not None and payloads.offers_own_tool(body, TOOL_NAME)
+                    and upstream_model not in no_tools)
+        client_tools = set(payloads.tool_names(body))
+        if use_tool:
+            outbound = payloads.with_tool(outbound, photo_tool.spec)
+        r = await post_upstream(outbound)
+        if use_tool and r is not None and r.status_code in (400, 422):
+            # Most likely a model without tool calling. Answer in words
+            # rather than failing every question, and stop offering it.
+            logger.warning("kitegate: upstream model %s refused the photo tool (HTTP %s), so it "
+                           "answers without pictures from now on. Use a model with tool calling, "
+                           "or set KITEGATE_PHOTOS=off", upstream_model, r.status_code)
+            no_tools.add(upstream_model)
+            use_tool = False
+            outbound = payloads.without_own_tool(outbound, TOOL_NAME)
+            r = await post_upstream(outbound)
+        failure = upstream_failure(r)
+        if failure is not None:
+            return failure
 
         try:
             data = r.json()
+            if use_tool:
+                data, verdict, failure = await photo_rounds(outbound, data, engine, client_tools)
+                if failure is not None:
+                    return failure
+                if verdict is not None:
+                    stage = "error" if verdict.tier == "error" else "response"
+                    return blocked(verdict, stage, alias, stream, include_usage, email,
+                                   "(model reply)")
             if settings.upstream_kind == "nemo":
                 verdict = payloads.nemo_verdict(data, engine)
                 if verdict is not None:

@@ -24,10 +24,6 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
       - run: pytest
-      - name: Built Open WebUI filter is in step with the source
-        run: python tools/build_owui_filter.py --check
-      - name: Built Open WebUI photo tool is in step with the source
-        run: python tools/build_owui_photo.py --check
 
   docker:
     runs-on: ubuntu-latest

@@ -25,6 +25,9 @@ services:
       KITEGATE_PACK: ${KITEGATE_PACK:-secular-neutral}
       KITEGATE_PACK_KEYS: ${KITEGATE_PACK_KEYS:-}
       KITEGATE_REQUIRE_SIGNED_PACKS: "true"
+      # A system prompt set in Open WebUI: blank folds it in below the core
+      # and pack framing, "drop" ignores it.
+      KITEGATE_CLIENT_SYSTEM: ${KITEGATE_CLIENT_SYSTEM:-}
       # Adults' models pass through unscreened; children are refused on them.
       KITEGATE_PASSTHROUGH: "true"
       KITEGATE_BLOCK_LOG: /var/lib/kitegate/blocks.jsonl
@@ -32,9 +35,12 @@ services:
       # Pictures. Empty is not "off": the gateway scans them when there is a
       # moderation key and removes them when there is not, so a child is never
       # shown an unscanned picture either way. "block" removes them whatever
-      # the key says. Pictures still need the photo tool installed in Open
-      # WebUI by hand — see section 9 of docs/quickstart.md.
+      # the key says. The photographs come from the gateway's own find_photo
+      # tool, so nothing is installed in Open WebUI; see section 9 of
+      # docs/quickstart.md.
       KITEGATE_IMAGE_POLICY: ${KITEGATE_IMAGE_POLICY:-}
+      # Blank means Wikipedia lead images. "off" removes the tool.
+      KITEGATE_PHOTOS: ${KITEGATE_PHOTOS:-}
       KITEGATE_IMAGE_SCAN_API_KEY: ${KITEGATE_IMAGE_SCAN_API_KEY:-}
       # Blank means the hosts of the providers Kitegate ships, which is what
       # you want: both Wikimedia hosts (measured, scaled thumbnails come from
@@ -87,39 +93,6 @@ services:
       DEFAULT_USER_ROLE: pending
     volumes:
       - open-webui:/app/backend/data
-
-  # Installs the photo tool into Open WebUI, so nobody has to paste 500 lines
-  # into the admin panel. Runs on every `up`, is idempotent, and exits.
-  #
-  # Open WebUI stores Workspace tools in its own database and cannot load one
-  # from a file or an environment variable, so the only route is its API. That
-  # needs a token, which needs an account, which is why ADMIN_EMAIL and
-  # ADMIN_PASSWORD exist. Leave them blank and this service does nothing.
-  #
-  # Reuses the open-webui image rather than pulling python: it is already here,
-  # it is a Python app, and provision.py is stdlib-only so it needs nothing
-  # from that image beyond the interpreter.
-  provision:
-    image: ghcr.io/open-webui/open-webui:v0.12.0
-    restart: "no"
-    depends_on:
-      open-webui:
-        condition: service_healthy
-    entrypoint: ["python3", "/provision/provision.py"]
-    environment:
-      WEBUI_URL: http://open-webui:8080
-      ADMIN_NAME: ${ADMIN_NAME:-Admin}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      TOOL_FILE: /provision/dist/kitegate_openwebui_photo.py
-      TOOL_ID: kitegate_photo
-      TOOL_NAME: Kitegate Photo
-      # The children's model, so the tool is callable without an admin
-      # ticking a box. Keep in step with KITEGATE_CHILD_MODELS above.
-      ATTACH_TO_MODELS: kids-encyclopedia
-    volumes:
-      - ./provision.py:/provision/provision.py:ro
-      - ../../dist:/provision/dist:ro
 
   # COMPOSE_PROFILES=local: a model on this machine instead of a provider.
   ollama:

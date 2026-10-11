@@ -5,7 +5,7 @@ name: pr-title
 # So the title has to be a Conventional Commit, e.g.
 #   feat(core): add a values pack for primary schools
 #   fix(gateway): hold streamed replies until screened
-#   feat(openwebui)!: rename the filter valves      (breaking change)
+#   feat(gateway)!: rename KITEGATE_PACK            (breaking change)
 # A scope is required. See CONTRIBUTING.md.
 
 on:
@@ -48,7 +48,6 @@ jobs:
             librechat
             nemo
             deploy
-            tools
             tests
             docs
             ci

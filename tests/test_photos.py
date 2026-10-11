@@ -4,14 +4,7 @@ Every payload here is the shape measured against the live API, so a provider
 can be changed without a network call and a change in response shape shows up
 as a failing test rather than as "no picture" in a child's chat.
 """
-import ast
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
 
 from kitegate.images import safe_image_url
 from kitegate.photos import (BLOCKED_SUBJECT, DEFAULT_PROVIDERS, PROVIDERS, Nasa, Wikimedia,
@@ -223,31 +216,3 @@ def test_tracking_is_stripped_but_real_parameters_are_kept():
     assert strip_tracking("https://h/x.jpg?utm_source=a&width=100") == "https://h/x.jpg?width=100"
     assert strip_tracking("https://h/x.jpg") == "https://h/x.jpg"
     assert strip_tracking("https://h/x.jpg?utm_source=a") == "https://h/x.jpg"
-
-
-# -- the built single-file tool -------------------------------------------------
-def test_photo_dist_is_up_to_date():
-    r = subprocess.run([sys.executable, str(ROOT / "tools" / "build_owui_photo.py"), "--check"],
-                       capture_output=True, text=True)
-    assert r.returncode == 0, r.stdout + r.stderr
-
-
-def test_the_built_tool_parses_and_needs_no_kitegate_import():
-    # Open WebUI execs the pasted file with nothing importable, so a leftover
-    # "from kitegate..." would fail at load time in the admin panel rather
-    # than here. A syntax error would too: the inliner drops only the marked
-    # line, so a bracketed import would leave a stray fragment behind.
-    built = (ROOT / "dist" / "kitegate_openwebui_photo.py").read_text(encoding="utf-8")
-    ast.parse(built)
-    assert "from kitegate" not in built
-    assert "class Tools" in built
-
-
-def test_a_multiline_marked_import_is_refused_by_the_builder():
-    sys.path.insert(0, str(ROOT / "tools"))
-    from build_owui_filter import splice
-    bad = ('"""title: x"""\n'
-           "from kitegate.photos import (A,  # kitegate:inline\n"
-           "                             B)\n")
-    with pytest.raises(SystemExit, match="one line"):
-        splice(bad, "# inlined\n", "builder", "adapter")

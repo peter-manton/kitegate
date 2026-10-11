@@ -87,13 +87,6 @@ def _parse(data: dict, source: str) -> ValuesPack:
     )
 
 
-# Filled in by tools/build_owui_filter.py when the package is inlined into a
-# single Open WebUI file, where there is no package directory to read from.
-# The build checks each pack's signature before embedding it, so embedded
-# packs carry the same trust as the code around them.
-_EMBEDDED: dict = {}
-
-
 def _signature(text: Optional[str], source: str) -> Optional[Signature]:
     return Signature.from_text(text, source) if text is not None else None
 
@@ -105,8 +98,6 @@ def load_pack(name_or_path: Union[str, Path], trust: Optional[PackTrust] = None)
     signature. Other packs are checked against `trust` (default: from the
     environment, KITEGATE_PACK_KEYS and KITEGATE_REQUIRE_SIGNED_PACKS).
     """
-    if str(name_or_path) in _EMBEDDED:
-        return _parse(yaml.safe_load(_EMBEDDED[str(name_or_path)]), f"packs/{name_or_path}.yaml")
     path = Path(name_or_path)
     try:
         if path.suffix in (".yaml", ".yml") and path.exists():
@@ -129,7 +120,5 @@ def load_pack(name_or_path: Union[str, Path], trust: Optional[PackTrust] = None)
 
 
 def bundled_packs() -> List[str]:
-    if _EMBEDDED:
-        return sorted(_EMBEDDED)
     folder = resources.files("kitegate").joinpath("packs")
     return sorted(p.name[:-5] for p in folder.iterdir() if p.name.endswith(".yaml"))

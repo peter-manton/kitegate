@@ -8,8 +8,7 @@ for a hosted moderation API and reads the answer back, in the same shape as
 `gateway/payloads.nemo_verdict`. The HTTP call itself lives in the gateway so
 the core keeps its two dependencies.
 
-Framework-free, like the engine and `messages`, and no relative imports except
-the two kitegate modules the Open WebUI build already inlines.
+Framework-free, like the engine and `messages`.
 
 ---------------------------------------------------------------------------
 WHY A HOSTED API IS A REASONABLE CHOICE HERE, AND WHERE IT IS NOT
@@ -270,9 +269,8 @@ class ScanCache:
     short warm-up almost every request is a cache hit and makes no API call at
     all.
 
-    Bounded and in-memory, in the same spirit as the Open WebUI filter's
-    _MAX_HELD: a safety component should not be able to grow until the process
-    dies. Oldest entries go first, which suits this access pattern because the
+    Bounded and in-memory: a safety component should not be able to grow until
+    the process dies. Oldest entries go first, which suits this access pattern because the
     popular subjects keep being re-inserted.
     """
 

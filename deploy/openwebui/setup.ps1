@@ -63,24 +63,6 @@ if (-not (Test-Path .env)) {
     if ($pack) { Set-Var KITEGATE_PACK $pack }
     $kids = Read-Host "Children's account emails, comma-separated (can be added later in .env)"
     if ($kids) { Set-Var KITEGATE_CHILD_USERS $kids }
-
-    # The admin account is created by the provisioner rather than in the
-    # browser, because the photo tool is installed through Open WebUI's API
-    # and that needs a token, which needs an account. Leave the email blank to
-    # sign up in the browser instead; the tool then has to be installed by hand.
-    $adminName = Read-Host 'Your (grown-up) name [Admin]'
-    if ($adminName) { Set-Var ADMIN_NAME $adminName }
-    $adminEmail = Read-Host 'Your admin email, for signing in (blank to do this in the browser)'
-    if ($adminEmail) {
-        Set-Var ADMIN_EMAIL $adminEmail
-        do {
-            $secure = Read-Host 'Admin password (at least 8 characters)' -AsSecureString
-            $adminPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-            if ($adminPass.Length -lt 8) { Write-Host 'Too short.' }
-        } while ($adminPass.Length -lt 8)
-        Set-Var ADMIN_PASSWORD $adminPass
-    }
     [IO.File]::WriteAllLines((Join-Path $PSScriptRoot '.env'), [string[]]$script:lines)
     Write-Host 'Wrote .env'
     # Said plainly, because "no pictures" and "unchecked pictures" look the
@@ -92,26 +74,11 @@ if (-not (Test-Path .env)) {
 if (Select-String -Path .env -Pattern '^COMPOSE_PROFILES=local' -Quiet) {
     Write-Host 'The first start downloads the local model (several GB). This can take a while.'
 }
-# The photo tool is built from the package, so build it before starting: the
-# provision service mounts dist/ and installs whatever is there.
-$py = Get-Command python, python3 -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($py) { & $py.Source (Join-Path $PSScriptRoot '..\..\tools\build_owui_photo.py') *> $null }
 
 docker compose up -d --build
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $port = (Get-Content .env | Where-Object { $_ -like 'WEBUI_PORT=*' }) -replace '^WEBUI_PORT=', ''
 if (-not $port) { $port = '3000' }
-$admin = (Get-Content .env | Where-Object { $_ -like 'ADMIN_EMAIL=*' }) -replace '^ADMIN_EMAIL=', ''
 Write-Host ''
-if ($admin) {
-    # Wait for the one-shot provisioner so its result is part of setup's
-    # output rather than something to go looking for in the logs.
-    docker compose wait provision *> $null
-    docker compose logs provision --no-log-prefix 2>$null | Select-Object -Last 5
-    Write-Host ''
-    Write-Host "Open http://127.0.0.1:$port and sign in as $admin."
-} else {
-    Write-Host "Open http://127.0.0.1:$port and create the first account: it becomes the admin."
-    Write-Host 'The photo tool was NOT installed: see docs/quickstart.md section 9.'
-}
+Write-Host "Open http://127.0.0.1:$port and create the first account: it becomes the admin."
 Write-Host 'Then add each child in Admin Panel > Users with an email listed in KITEGATE_CHILD_USERS.'

@@ -3,7 +3,7 @@
 `kitegate.images` holds the policy (which URLs may be sent, which category
 scores mean "no"), and this holds the request. Same split as `payloads` and
 `app`: the core stays plain-dict in, plain-dict out and keeps its two
-dependencies, so the Open WebUI build can still inline it.
+dependencies.
 
 What makes this cheap, in order of how much it saves:
 

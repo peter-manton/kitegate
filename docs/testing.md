@@ -33,8 +33,16 @@ prompt at a time: every pattern is `\b`-anchored, every label is a readable
 `family.name` (it lands in `blocks.jsonl` and in the alert webhook), no reply
 leaks a regex or a rule label, each tier says something different, distress
 and PII are not applied to model output, persona is not applied to the child's
-own words, the core's own text stays ASCII for the Open WebUI build, and no
-pattern backtracks on hostile input.
+own words, the core's own text stays ASCII, and no pattern backtracks on
+hostile input. It also holds the core framing to its job: a paragraph for
+every core tier (`CORE_FRAMING_COVERS`), precedence stated first, a word
+budget, nothing that is a pack's decision (voice, worldview, who a child is
+sent to), and no bundled pack whose framing contradicts it.
+
+`tests/test_gateway.py` covers what the model is actually sent: one system
+message, first, with a client's own system and developer messages folded in
+below the core and the pack, or dropped. `tests/test_phototool.py` checks
+that this still holds on every round of the photo tool loop.
 
 ### The xfail lists are a to-do list, not decoration
 
@@ -47,38 +55,11 @@ list in the same commit. Do not resolve one by deleting the entry alone, and do
 not add an entry to make a red test green without saying so in the commit
 message.
 
-The Open WebUI tests load the BUILT file in `dist/`, because that is what
-people paste in. `test_dist_is_up_to_date` fails if you changed the package
-or adapter without running `python tools/build_owui_filter.py`.
-
-## Real-browser test of the Open WebUI filter
-
-`tests/browser/owui_filter_browser.py` drives Chromium (Playwright) against a
-running Open WebUI that has the built filter installed as an active, global
-function. Use a disposable instance, never one real children use.
-
-Valves for the test: `child_model_ids` = the model under test,
-`child_user_emails` = the test child's email, `pack` = any.
-
-```bash
-BASE=http://127.0.0.1:3100 CHILD_EMAIL=... CHILD_PASSWORD=... \
-MODEL=<child model id> OTHER_MODEL=<any other model id> \
-python tests/browser/owui_filter_browser.py
-```
-
-Run it twice:
-
-1. With title, tag and follow-up generation ON and `EXPECT_TASKS_ON=1`:
-   the filter must refuse to serve the children's model.
-2. With them OFF: innocent question answered, distress gets the Childline
-   reply, a reply that trips the output rules shows only the block message,
-   and the child is refused on the other model.
-
-## Why the background-task check exists
+## Why Open WebUI goes through the gateway
 
 Open WebUI generates chat titles, tags and follow-up suggestions with separate
-model calls that skip function filters entirely, so a blocked reply can still
-get a title or suggestions that repeat what was blocked. The filter cannot
-screen those calls, so it refuses to serve a children's model until they are
-switched off. Connecting Open WebUI through the gateway avoids this: those
-calls are screened there.
+model calls that skip function filters entirely, so a blocked reply could
+still get a title or suggestions that repeat what was blocked. Through the
+gateway those calls are ordinary children's-model calls and are screened like
+any other. That, and alerts, pictures and the system prompt, is why the
+in-process Open WebUI filter was removed.

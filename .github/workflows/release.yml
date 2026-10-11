@@ -51,9 +51,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      # The package itself is installed because the build_command rebuilds the
-      # Open WebUI files in dist/, and that imports kitegate.
-      - run: pip install -e . "python-semantic-release==10.7.0" "build==1.6.1"
+      - run: pip install "python-semantic-release==10.7.0" "build==1.6.1"
 
       - name: Version, changelog, commit, tag and GitHub Release
         id: release
@@ -64,7 +62,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           semantic-release -v version
 
-      - name: Attach the package and the Open WebUI files to the release
+      - name: Attach the package to the release
         if: steps.release.outputs.released == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -64,6 +64,9 @@ MAX_CALLS = 3
 #: A subject is a noun phrase. Anything longer is a question or a sentence,
 #: and is not sent.
 MAX_SUBJECT = 80
+#: Provider requests allowed to wait for their turn at the throttle. At one a
+#: second, this is about half a minute of queue.
+MAX_QUEUED = 32
 
 USER_AGENT = "kitegate-gateway/1.0 (self-hosted children's encyclopedia; +https://github.com/kitegate)"
 THUMB_WIDTH = 640
@@ -127,6 +130,15 @@ class RateLimited(Exception):
     """A provider returned 429 twice. Distinct from "no image found" on purpose."""
 
 
+class ProviderUnavailable(Exception):
+    """A provider gave no usable answer: unreachable, an HTTP error, or not JSON.
+
+    Distinct from "no such photograph" for the same reason as RateLimited. A
+    hiccup that was cached as "not found" would keep a subject without a
+    picture until its entry was pushed out of the cache.
+    """
+
+
 def subject_of(call: dict) -> str:
     """The subject argument of one tool call, or "" if it cannot be read."""
     raw = ((call or {}).get("function") or {}).get("arguments")
@@ -173,18 +185,30 @@ class PhotoTool:
         self.retry_sleep = 2.0
         self._lock = asyncio.Lock()
         self._last_request_at = 0.0
+        self._queued = 0
         # (provider, endpoint, subject) -> Photo or None
         self._cache: Dict[Tuple[str, str, str], Optional[Photo]] = {}
 
     # -- HTTP ---------------------------------------------------------------
     async def _throttle(self) -> None:
-        async with self._lock:
-            gap = time.monotonic() - self._last_request_at
-            if gap < self.min_gap:
-                await asyncio.sleep(self.min_gap - gap)
-            self._last_request_at = time.monotonic()
+        # One request a second for the whole gateway, so a burst queues. The
+        # queue is bounded: past MAX_QUEUED waiting lookups a request is told
+        # the library is busy at once, rather than one client being able to
+        # make everyone else's picture wait behind its own.
+        if self._queued >= MAX_QUEUED:
+            raise RateLimited("too many lookups waiting")
+        self._queued += 1
+        try:
+            async with self._lock:
+                gap = time.monotonic() - self._last_request_at
+                if gap < self.min_gap:
+                    await asyncio.sleep(self.min_gap - gap)
+                self._last_request_at = time.monotonic()
+        finally:
+            self._queued -= 1
 
-    async def _get(self, url: str, params: dict) -> Optional[dict]:
+    async def _get(self, url: str, params: dict) -> dict:
+        """The provider's JSON. Raises RateLimited or ProviderUnavailable."""
         for attempt in (1, 2):
             await self._throttle()
             try:
@@ -192,7 +216,7 @@ class PhotoTool:
                                           headers={"user-agent": USER_AGENT}, timeout=TIMEOUT)
             except httpx.HTTPError:
                 logger.warning("kitegate: photo provider unreachable: %s", url)
-                return None
+                raise ProviderUnavailable(url) from None
             if r.status_code == 429:
                 if attempt == 1:
                     await asyncio.sleep(self.retry_sleep)
@@ -200,12 +224,13 @@ class PhotoTool:
                 raise RateLimited(url)
             if r.status_code != 200:
                 logger.warning("kitegate: photo provider returned HTTP %s: %s", r.status_code, url)
-                return None
+                raise ProviderUnavailable(url)
             try:
                 return r.json()
             except ValueError:
-                return None
-        return None
+                logger.warning("kitegate: photo provider did not return JSON: %s", url)
+                raise ProviderUnavailable(url) from None
+        raise ProviderUnavailable(url)
 
     def _remember(self, key: Tuple[str, str, str], photo: Optional[Photo]) -> None:
         if key in self._cache:
@@ -215,11 +240,9 @@ class PhotoTool:
         self._cache[key] = photo
 
     async def _find(self, provider: PhotoProvider, endpoint: str, subject: str) -> Optional[Photo]:
-        """One provider endpoint. Raises RateLimited."""
+        """One provider endpoint. Raises RateLimited or ProviderUnavailable."""
         request = provider.lookup(endpoint, subject, THUMB_WIDTH)
         data = await self._get(request.url, request.params)
-        if data is None:
-            return None
         title, photo = provider.read_lookup(data, endpoint)
         if photo is not None:
             return photo
@@ -229,15 +252,11 @@ class PhotoTool:
         if search is None:
             return None
         data = await self._get(search.url, search.params)
-        if data is None:
-            return None
         nxt = next_search_title(provider.read_search(data), [subject, title or ""])
         if not nxt:
             return None
         request = provider.lookup(endpoint, nxt, THUMB_WIDTH)
         data = await self._get(request.url, request.params)
-        if data is None:
-            return None
         return provider.read_lookup(data, endpoint)[1]
 
     # -- the tool -----------------------------------------------------------
@@ -260,6 +279,10 @@ class PhotoTool:
                     photo = await self._find(provider, endpoint, subject)
                 except RateLimited:
                     logger.warning("kitegate: photo provider %s is rate limiting", provider.name)
+                    throttled = True
+                    continue
+                except ProviderUnavailable:
+                    # Not remembered: a hiccup says nothing about the subject.
                     throttled = True
                     continue
                 self._remember(key, photo)

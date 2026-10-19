@@ -24,8 +24,8 @@ classifiers = [
 
 [project.optional-dependencies]
 # The OpenAI-compatible gateway. The core above needs none of this.
-gateway = ["fastapi==0.143.0", "httpx==0.28.1", "uvicorn==0.54.0"]
-dev = ["pytest==9.1.1", "fastapi==0.143.0", "httpx==0.28.1", "uvicorn==0.54.0"]
+gateway = ["fastapi==0.143.3", "httpx==0.28.1", "uvicorn==0.54.0"]
+dev = ["pytest==9.1.1", "fastapi==0.143.3", "httpx==0.28.1", "uvicorn==0.54.0"]
 
 [project.scripts]
 kitegate = "kitegate.gateway:main"

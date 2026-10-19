@@ -34,7 +34,7 @@ RUN pip install --no-deps --no-compile --target /site . \
  && mkdir -p /var/lib/kitegate
 
 # -- run -----------------------------------------------------------------------
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:83aa8d4f74a4d7f7cf2d472054139bef71a927b76c680c0f2e1021d6b1d6d732
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f47f5807043391605425f2bd162b25f50cebdc90640bacc804e0177608fe5c65
 
 LABEL org.opencontainers.image.title="kitegate gateway" \
       org.opencontainers.image.description="OpenAI-compatible gateway that screens children's chats" \

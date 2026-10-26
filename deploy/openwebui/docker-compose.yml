@@ -116,7 +116,7 @@ services:
   # COMPOSE_PROFILES=local: a model on this machine instead of a provider.
   ollama:
     profiles: [local]
-    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
+    image: ollama/ollama:0.40.9@sha256:5c6707fcf2e1a30cffe2ecb7e315584fc87747c389327e4bc711c4959aa1eecc
     restart: unless-stopped
     volumes:
       - ollama:/root/.ollama
@@ -124,7 +124,7 @@ services:
   # Downloads the model once (several GB), then exits.
   ollama-pull:
     profiles: [local]
-    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
+    image: ollama/ollama:0.40.9@sha256:5c6707fcf2e1a30cffe2ecb7e315584fc87747c389327e4bc711c4959aa1eecc
     depends_on: [ollama]
     entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull \"$$MODEL\""]
     environment:

@@ -1,7 +1,7 @@
 # NeMo Guardrails server with the Kitegate content-safety config.
 #   docker build -f adapters/nemo/Dockerfile -t kitegate-nemo adapters/nemo
 # nemoguardrails supports Python 3.10 to 3.13.
-FROM python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
     NEMO_GUARDRAILS_NO_USAGE_STATS=1

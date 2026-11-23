@@ -63,7 +63,7 @@ services:
     pids_limit: 256
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.12.0@sha256:1565038903151ced924b5a3226f73f40f16963df4b910441f6391f10144afdaa
+    image: ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901
     restart: unless-stopped
     depends_on:
       kitegate:
